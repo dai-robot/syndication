@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Battle Prototype A</title>
+<style>
+html,body{margin:0;width:100%;height:100%;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden}
+canvas{width:min(1024px,100vw);height:auto;max-height:100vh;aspect-ratio:256/224;background:#000;image-rendering:pixelated;image-rendering:crisp-edges}
+</style>
+</head>
+<body>
+<canvas id="game" width="256" height="224"></canvas>
+<script>
+"use strict";
+const canvas=document.getElementById("game"),ctx=canvas.getContext("2d");
+ctx.imageSmoothingEnabled=false;
+const W=256,H=224;
+const C={black:"#000",white:"#f8f8f8",gray:"#9ca3af",dgray:"#4b5563",ink:"#090d18",win:"#07101f",blue:"#0f1c3a",navy:"#111c32",gold:"#caa15a",red:"#ef4444",green:"#22c55e",cyan:"#73d8ff",skin:"#f1c79b",skin2:"#cf9a63",suit:"#1c2748",suit2:"#0d142a",dragon:"#2f8f8a",dragon2:"#1d5f5c",hi:"#7cf4e8"};
+function r(x,y,w,h,c){ctx.fillStyle=c;ctx.fillRect(x|0,y|0,w|0,h|0)}
+function t(s,x,y,c,size=9){ctx.fillStyle=c||C.white;ctx.font=size+"px 'MS Gothic','Courier New',monospace";ctx.textBaseline="top";ctx.fillText(s,x,y)}
+function win(x,y,w,h){r(x,y,w,h,C.black);r(x+1,y+1,w-2,h-2,C.white);r(x+2,y+2,w-4,h-4,C.win);r(x+4,y+4,w-8,h-8,C.ink)}
+function bar(x,y,w,v,max,col){r(x-1,y-1,w+2,5,C.white);r(x,y,w,3,C.dgray);r(x,y,Math.round(w*v/max),3,col);r(x,y,Math.round(w*v/max),1,"#dff")}
+const cmds=["説明する","根回しする","条件調整","市場を待つ"];
+let tick=0,cursor=0,phase="intro",msg=["強気CFOドラゴンが あらわれた！","100億円。なるべく タイトで。"],anim=0,flash=0,shake=0,heroStep=0;
+const stats={ki:86,nema:42,demand:58,trust:46,spread:115,market:61};
+function drawBg(){
+  r(0,0,W,128,"#080a12");
+  for(let y=0;y<128;y+=8)r(0,y,W,1,y%16?"#0d1322":"#18213a");
+  r(0,14,W,2,C.white);
+  const wx=76,wy=18,ww=160,wh=70;
+  r(wx-2,wy-2,ww+4,wh+4,C.white);r(wx,wy,ww,wh,"#050a18");
+  r(wx,wy,ww,16,"#07132c");r(wx,wy+16,ww,18,"#091a3c");
+  r(wx+132,wy+8,13,13,"#e7e5c8");r(wx+136,wy+9,10,11,"#07132c");
+  for(let i=0;i<35;i++){let sx=wx+3+(i*37)%(ww-8),sy=wy+3+(i*19)%42;if((i+(tick>>4))%3)r(sx,sy,1,1,i%2?C.white:C.gray)}
+  for(let i=0;i<9;i++){let bx=wx+4+i*18,bh=18+(i*11)%36,bw=13;r(bx,wy+wh-bh,bw,bh,i%2?"#101a38":"#0b132b");r(bx,wy+wh-bh,bw,1,"#26345f");for(let yy=wy+wh-bh+4;yy<wy+wh-3;yy+=7)for(let xx=bx+2;xx<bx+bw-2;xx+=5){let lit=((i*7+xx+yy+(tick>>5))%5)<2;r(xx,yy,2,2,lit?C.gold:"#070b18")}}
+  r(wx+ww/2,wy,2,wh,"#111827");r(wx,wy+36,ww,2,"#111827");
+  r(0,106,W,22,"#3b2514");r(0,106,W,3,"#8a6232");r(0,124,W,4,"#1d120a");
+  for(let x=0;x<W;x+=18){r(x,114,10,1,"#6b4624");r(x+8,121,8,1,"#201108")}
+  r(86,98,36,11,"#f4f0d8");r(88,100,15,1,"#6b7280");t("100億",90,101,"#1e3a8a",7);
+  r(136,99,24,9,"#eef2f7");r(139,104,3,2,C.green);r(145,101,3,5,C.cyan);r(151,103,3,3,C.gold);
+  r(20,92,22,14,"#111827");r(22,94,18,8,"#0a1026");r(20,106,27,2,"#4b5563");
+}
+function dragon(x,y){
+  let s=shake?((tick&1)?1:-1):0;x+=s;
+  if(flash&&((tick>>1)&1)){r(x,y,62,70,C.white);return}
+  r(x+10,y+0,10,9,"#bba176");r(x+43,y+2,9,8,"#bba176");
+  r(x+14,y+8,40,18,C.dragon2);r(x+10,y+15,48,20,C.dragon);r(x+7,y+28,51,10,C.dragon2);
+  r(x+17,y+18,7,5,C.gold);r(x+39,y+18,7,5,C.gold);r(x+20,y+19,2,2,"#111");r(x+42,y+19,2,2,"#111");
+  r(x+27,y+27,15,3,"#551313");for(let i=0;i<5;i++)r(x+29+i*3,y+27,1,4,C.white);
+  for(let i=0;i<22;i++)r(x+15+(i%7)*5,y+10+((i/7)|0)*8,1,1,i%2?C.hi:C.dragon2);
+  r(x+17,y+41,34,8,C.white);r(x+23,y+42,20,20,C.red);r(x+10,y+48,48,23,C.suit);r(x+9,y+56,50,15,C.suit2);
+  r(x+14,y+50,1,18,"#4b5ea0");r(x+46,y+50,1,18,"#050815");r(x+52,y+54,8,10,C.dragon);r(x+0,y+54,8,10,C.dragon);
+  r(x+8,y+69,17,4,"#050815");r(x+36,y+69,17,4,"#050815");
+}
+function hero(x,y){
+  x+=heroStep;
+  r(x+12,y+0,20,6,"#3f2410");r(x+9,y+5,27,9,"#6b3f1f");r(x+11,y+13,24,14,C.skin);r(x+14,y+18,3,3,"#111");r(x+27,y+18,3,3,"#111");r(x+19,y+25,8,2,C.skin2);
+  r(x+14,y+30,20,6,C.white);r(x+9,y+35,30,24,C.suit);r(x+12,y+37,24,3,"#34467f");r(x+20,y+36,5,19,C.red);r(x+21,y+37,2,14,"#f87171");
+  r(x+4,y+40,8,18,C.suit2);r(x+37,y+40,8,18,C.suit2);r(x+0,y+49,11,9,"#eef2f7");r(x+38,y+49,12,9,"#eef2f7");
+  r(x+12,y+59,9,13,"#111827");r(x+28,y+59,9,13,"#111827");r(x+10,y+71,12,3,"#050815");r(x+27,y+71,12,3,"#050815");
+}
+function drawUI(){
+  win(3,130,78,46);t("主幹事の勇者",10,136,C.gold,8);t("気力 "+stats.ki,10,149,C.white,8);bar(45,151,27,stats.ki,100,C.green);t("根回 "+stats.nema,10,160,C.white,8);t("信頼 "+stats.trust,10,170,C.white,8);
+  win(83,130,88,46);t("コマンド",91,136,C.gold,8);for(let i=0;i<cmds.length;i++){let y=148+(i%4)*9;t((i===cursor?"▶ ":"  ")+cmds[i],91,y,i===cursor?C.gold:C.white,8)}
+  win(173,130,80,46);t("CFOドラゴン",181,136,C.gold,8);t("需要 "+stats.demand,181,149,C.white,8);t("SP "+stats.spread+"bp",181,160,C.white,8);t("市況 "+stats.market,181,170,C.white,8);
+  win(3,178,250,43);t(msg[0],12,186,C.white,10);t(msg[1]||"",12,203,C.white,10);
+}
+function decide(){phase="act";anim=1;msg=["主幹事は "+cmds[cursor]+" を選んだ！","CFOの条件目線が すこし動いた。"]}
+function update(){
+  tick++; if(shake>0)shake--; if(flash>0)flash--;
+  if(phase==="act"){anim++;heroStep=anim<10?-anim:Math.max(-10,-20+anim);if(anim===10){flash=10;shake=12}if(anim>24){heroStep=0;phase="command";anim=0}}
+}
+function draw(){r(0,0,W,H,C.black);drawBg();dragon(34,35);hero(190,58);drawUI()}
+function loop(){update();draw();requestAnimationFrame(loop)}
+addEventListener("keydown",e=>{if(["ArrowUp","ArrowDown","Enter"," "].includes(e.key))e.preventDefault();if(e.key==="ArrowUp")cursor=(cursor+3)%4;else if(e.key==="ArrowDown")cursor=(cursor+1)%4;else if(e.key==="Enter"||e.key===" ")decide()});
+loop();
+</script>
+</body>
+</html>

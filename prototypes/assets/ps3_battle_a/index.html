@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PS3 Battle Prototype A</title>
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#02050a;font-family:system-ui,sans-serif}
+#wrap{position:relative;width:100vw;height:100vh;background:#02050a}
+canvas{display:block}
+#hud{position:absolute;inset:0;pointer-events:none}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="hud"></canvas></div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script>
+"use strict";
+const wrap=document.getElementById("wrap"),hud=document.getElementById("hud"),hctx=hud.getContext("2d");
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+wrap.prepend(renderer.domElement);
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x030814);
+scene.fog=new THREE.Fog(0x030814,8,26);
+const camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,.1,100);
+camera.position.set(6.2,3.2,7.2); camera.lookAt(0,1.2,0);
+const clock=new THREE.Clock();
+const rayGroup=new THREE.Group(); scene.add(rayGroup);
+const state={cursor:0,phase:"idle",timer:0,cfo:100,ki:100,nema:50,review:55,demand:70,trust:62,sp:115,market:48,msg:["強気CFOドラゴン戦","100億円。なるべく タイトで。"],shake:0,flash:0};
+const commands=["説明する","根回しする","条件調整","市場を待つ"];
+const mat=(c,rough=.65,metal=.05)=>new THREE.MeshStandardMaterial({color:c,roughness:rough,metalness:metal});
+const glow=(c,i=1.5)=>new THREE.MeshStandardMaterial({color:c,emissive:c,emissiveIntensity:i,roughness:.35});
+function mesh(g,m,x,y,z,sx=1,sy=1,sz=1){const o=new THREE.Mesh(g,m);o.position.set(x,y,z);o.scale.set(sx,sy,sz);o.castShadow=o.receiveShadow=true;scene.add(o);return o}
+function box(w,h,d,m,x,y,z){return mesh(new THREE.BoxGeometry(w,h,d),m,x,y,z)}
+function sphere(r,m,x,y,z,sx=1,sy=1,sz=1){return mesh(new THREE.SphereGeometry(r,18,12),m,x,y,z,sx,sy,sz)}
+function cyl(r,h,m,x,y,z){const o=mesh(new THREE.CylinderGeometry(r,r,h,16),m,x,y,z);return o}
+function cone(r,h,m,x,y,z){const o=mesh(new THREE.ConeGeometry(r,h,16),m,x,y,z);return o}
+scene.add(new THREE.HemisphereLight(0x88b8ff,0x171018,.55));
+const key=new THREE.DirectionalLight(0xb7d7ff,1.05);key.position.set(3,7,5);key.castShadow=true;key.shadow.mapSize.set(1024,1024);scene.add(key);
+const warm=new THREE.PointLight(0xffb56a,1.2,12);warm.position.set(-4,3,2);scene.add(warm);
+const rim=new THREE.PointLight(0x66ccff,1.0,10);rim.position.set(3,2.5,-4);scene.add(rim);
+// room
+box(12,.2,10,mat(0x111827),0,-.1,0);
+box(12,5,.2,mat(0x111827),0,2.4,-5);
+box(.2,5,10,mat(0x0d1324),-6,2.4,0);
+box(.2,5,10,mat(0x0d1324),6,2.4,0);
+for(let i=0;i<7;i++){box(1.15,2.6,.05,glow(0x071936,.55),-4.6+i*1.55,2.55,-4.88);for(let j=0;j<10;j++)if((i*7+j)%3!==0)box(.08,.08,.03,glow(0xffc75a,1.2),-5.05+i*1.55+(j%3)*.28,1.55+Math.floor(j/3)*.34,-4.84)}
+box(4.2,.08,1.35,mat(0x57351d),0,.7,.35);box(4.1,.12,1.25,mat(0x7b4a25),0,.78,.35);
+box(.7,.04,.45,mat(0xe9dfc8),-.8,.88,.05);box(.5,.04,.35,mat(0xe9dfc8),-.05,.9,.1);box(.7,.04,.35,mat(0xe9dfc8),.75,.88,.0);
+box(1.45,.85,.05,glow(0x0f2d52,.8),0,2.25,-4.72);box(1.3,.07,.04,glow(0x69e7ff,1.6),0,2.05,-4.68);box(.5,.05,.04,glow(0xfacc15,1.2),.2,2.33,-4.67);
+function makeHero(){
+ const g=new THREE.Group();scene.add(g);
+ const suit=mat(0x17234a),dark=mat(0x0b1020),skin=mat(0xd89a68),hair=mat(0x3a2417),paper=mat(0xe8edf4);
+ const torso=new THREE.Mesh(new THREE.BoxGeometry(.55,.95,.28),suit);torso.position.y=1.05;g.add(torso);
+ const head=new THREE.Mesh(new THREE.SphereGeometry(.26,18,12),skin);head.position.y=1.73;head.scale.set(.92,1.08,.9);g.add(head);
+ const hairm=new THREE.Mesh(new THREE.SphereGeometry(.27,16,8),hair);hairm.position.set(0,.17,0);hairm.scale.set(1,.45,1);head.add(hairm);
+ const tie=new THREE.Mesh(new THREE.BoxGeometry(.08,.42,.03),mat(0xd23d3d));tie.position.set(0,1.1,.16);g.add(tie);
+ const arm1=new THREE.Mesh(new THREE.BoxGeometry(.16,.62,.16),suit);arm1.position.set(-.42,1.1,.05);arm1.rotation.z=-.25;g.add(arm1);
+ const arm2=new THREE.Mesh(new THREE.BoxGeometry(.16,.62,.16),suit);arm2.position.set(.42,1.1,.05);arm2.rotation.z=.25;g.add(arm2);
+ const tab=new THREE.Mesh(new THREE.BoxGeometry(.5,.35,.04),paper);tab.position.set(.55,.95,.22);tab.rotation.z=-.2;g.add(tab);
+ const leg1=new THREE.Mesh(new THREE.BoxGeometry(.18,.7,.18),dark);leg1.position.set(-.16,.25,0);g.add(leg1);
+ const leg2=new THREE.Mesh(new THREE.BoxGeometry(.18,.7,.18),dark);leg2.position.set(.16,.25,0);g.add(leg2);
+ g.position.set(2.2,.05,.35);g.rotation.y=-.75;return g;
+}
+function makeDragon(){
+ const g=new THREE.Group();scene.add(g);
+ const suit=mat(0x16213f),scale=mat(0x2f8f8a),scale2=mat(0x1c5f5a),horn=mat(0xc8b079),eye=glow(0xfacc15,1.8),red=mat(0xa91f2f);
+ const body=new THREE.Mesh(new THREE.SphereGeometry(.55,18,12),suit);body.scale.set(.85,1.35,.55);body.position.y=1.0;g.add(body);
+ const head=new THREE.Mesh(new THREE.SphereGeometry(.42,18,12),scale);head.position.set(0,1.95,.02);head.scale.set(1.15,.85,1);g.add(head);
+ const snout=new THREE.Mesh(new THREE.BoxGeometry(.5,.22,.42),scale2);snout.position.set(0,1.88,.35);g.add(snout);
+ const jaw=new THREE.Mesh(new THREE.BoxGeometry(.42,.08,.35),mat(0x5b1414));jaw.position.set(0,1.76,.42);g.add(jaw);
+ const e1=new THREE.Mesh(new THREE.SphereGeometry(.055,8,6),eye);e1.position.set(-.17,2.02,.37);g.add(e1);
+ const e2=e1.clone();e2.position.x=.17;g.add(e2);
+ const h1=new THREE.Mesh(new THREE.ConeGeometry(.08,.45,12),horn);h1.position.set(-.24,2.34,0);h1.rotation.z=.25;g.add(h1);
+ const h2=h1.clone();h2.position.x=.24;h2.rotation.z=-.25;g.add(h2);
+ const tie=new THREE.Mesh(new THREE.BoxGeometry(.11,.5,.04),red);tie.position.set(0,1.15,.33);g.add(tie);
+ for(let i=0;i<16;i++){const sc=new THREE.Mesh(new THREE.SphereGeometry(.025,6,4),glow(0x6ff7e6,.35));sc.position.set(-.32+(i%4)*.21,1.8+Math.floor(i/4)*.1,.38);g.add(sc)}
+ const arm1=new THREE.Mesh(new THREE.BoxGeometry(.18,.72,.18),scale);arm1.position.set(-.62,1.05,.04);arm1.rotation.z=.35;g.add(arm1);
+ const arm2=arm1.clone();arm2.position.x=.62;arm2.rotation.z=-.35;g.add(arm2);
+ g.position.set(-2.1,.05,.2);g.rotation.y=.6;return g;
+}
+const hero=makeHero(),dragon=makeDragon();
+function addPulse(start,end,color,count){for(let i=0;i<count;i++){const m=glow(color,1.8);const o=new THREE.Mesh(new THREE.SphereGeometry(.045,8,6),m);o.userData={start:start.clone(),end:end.clone(),life:0,off:i/count};rayGroup.add(o)}}
+function clearEffects(){while(rayGroup.children.length)rayGroup.remove(rayGroup.children[0])}
+function runCommand(){
+ if(state.phase!=="idle")return;
+ const c=commands[state.cursor];state.phase="action";state.timer=0;state.ki=Math.max(0,state.ki-5);
+ let down=15,success=true;clearEffects();
+ if(c==="根回しする"){down=20;state.demand+=10;state.nema=Math.max(0,state.nema-8);addPulse(hero.position,dragon.position,0x69e7ff,9)}
+ else if(c==="条件調整"){down=25;state.sp+=5;state.trust-=5;addPulse(hero.position,dragon.position,0xfacc15,5)}
+ else if(c==="市場を待つ"){state.market+=8;state.ki=Math.max(0,state.ki-3);success=Math.random()>.5;down=success?-5:0;addPulse(new THREE.Vector3(0,2.2,-4.6),dragon.position,0xff3355,5)}
+ else {state.trust+=5;addPulse(hero.position,dragon.position,0xffffff,6)}
+ if(success){state.cfo=Math.max(0,state.cfo-down);state.msg=["投資家需要が 10億 あつまった",c+" が CFOに刺さった。"]}else{state.cfo=Math.min(100,state.cfo+5);state.trust-=5;state.msg=["CFOの信頼が さがった","市場は まだ 荒れている。"]}
+ if(state.cfo<=0)state.msg=["CFOは しずかに うなずいた","条件決定へ 進め！"];
+}
+function hudDraw(){
+ hud.width=innerWidth*devicePixelRatio;hud.height=innerHeight*devicePixelRatio;hctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+ const w=innerWidth,h=innerHeight;hctx.clearRect(0,0,w,h);hctx.font="16px sans-serif";hctx.fillStyle="rgba(3,8,20,.62)";hctx.strokeStyle="rgba(145,210,255,.85)";hctx.lineWidth=1;
+ function p(x,y,ww,hh){hctx.fillStyle="rgba(5,12,28,.66)";hctx.fillRect(x,y,ww,hh);hctx.strokeStyle="rgba(165,220,255,.85)";hctx.strokeRect(x+.5,y+.5,ww-1,hh-1)}
+ p(22,18,280,56);hctx.fillStyle="#dff7ff";hctx.fillText("強気CFOドラゴン戦  CFO強気度 "+Math.round(state.cfo),38,42);hctx.fillStyle="#70e0ff";hctx.fillRect(38,54,220*(state.cfo/100),6);
+ p(24,h-132,230,108);hctx.fillStyle="#fff";hctx.fillText("主幹事担当者",42,h-104);hctx.fillText("気力 "+state.ki+"　根回 "+state.nema,42,h-78);hctx.fillText("審査納得度 "+state.review,42,h-52);
+ p(w-270,h-132,246,108);hctx.fillText("案件",w-250,h-104);hctx.fillText("需要 "+state.demand+"億　SP "+state.sp+"bp",w-250,h-78);hctx.fillText("信頼 "+state.trust+"　地合 "+state.market,w-250,h-52);
+ p(w/2-150,h-142,300,120);hctx.fillStyle="#dff7ff";hctx.fillText(state.msg[0],w/2-128,h-112);hctx.fillText(state.msg[1],w/2-128,h-88);
+ for(let i=0;i<commands.length;i++){hctx.fillStyle=i===state.cursor?"rgba(100,210,255,.35)":"rgba(255,255,255,.05)";hctx.fillRect(w/2-132,h-66+i*18,170,16);hctx.fillStyle=i===state.cursor?"#ffffff":"#c6d4e8";hctx.fillText((i===state.cursor?"▶ ":"   ")+commands[i],w/2-124,h-54+i*18)}
+}
+function animate(){
+ const dt=clock.getDelta(),time=clock.elapsedTime;dragon.position.y=.05+Math.sin(time*1.5)*.04;dragon.rotation.z=Math.sin(time*.9)*.025;
+ if(state.phase==="action"){state.timer+=dt;hero.position.x=2.2-Math.sin(Math.min(1,state.timer*3)*Math.PI)*.55;state.flash=(state.timer>.22&&state.timer<.55)?1:0;if(state.timer>1.05){state.phase="idle";state.flash=0;hero.position.x=2.2;clearEffects()}}
+ rayGroup.children.forEach(o=>{o.userData.life+=dt*1.4;const k=(o.userData.life+o.userData.off)%1;o.position.lerpVectors(o.userData.start,o.userData.end,k);o.scale.setScalar(1.2-k*.7)});
+ dragon.traverse(o=>{if(o.material&&o.material.color){o.material.emissive=new THREE.Color(state.flash?0x550000:0x000000);o.material.emissiveIntensity=state.flash&&Math.sin(time*40)>0?1.5:0}});
+ renderer.render(scene,camera);hudDraw();requestAnimationFrame(animate);
+}
+addEventListener("keydown",e=>{if(["ArrowUp","ArrowDown","Enter"," "].includes(e.key))e.preventDefault();if(e.key==="ArrowUp")state.cursor=(state.cursor+3)%4;else if(e.key==="ArrowDown")state.cursor=(state.cursor+1)%4;else if(e.key==="Enter"||e.key===" ")runCommand()});
+addEventListener("resize",()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+animate();
+</script>
+</body>
+</html>

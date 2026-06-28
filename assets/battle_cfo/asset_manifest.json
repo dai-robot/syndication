@@ -1,0 +1,22 @@
+{
+  "asset_set": "Debt Syndicate Quest - Strong CFO Dragon Battle",
+  "style": "late-16-bit console JRPG inspired, original assets",
+  "files": {
+    "battle_mockup_reference.png": "Full battle-screen reference. Use only as visual target, not as final static game screen.",
+    "battle_bg_meeting_room.png": "Clean battle background without characters/UI. Use as background layer.",
+    "hero_pose_sheet.png": "Hero pose sheet. Cursor can either use the full sheet as reference or crop into separate sprite frames.",
+    "cfo_dragon_pose_sheet.png": "CFO dragon enemy pose sheet. Cursor can crop idle/attack/damage poses from this sheet.",
+    "portraits_hero_cfo.png": "Portrait sheet for hero and CFO dragon. Use/crop for battle UI portraits."
+  },
+  "recommended_canvas": {
+    "logical_width": 724,
+    "logical_height": 543,
+    "display": "scale to fit browser, image-rendering: pixelated"
+  },
+  "notes": [
+    "Do not ask Cursor to draw characters from scratch.",
+    "Use these PNGs as source art.",
+    "First build one battle prototype only.",
+    "Later, crop sprites manually or with drawImage source rectangles."
+  ]
+}

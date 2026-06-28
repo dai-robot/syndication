@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>強気CFOドラゴン戦 - モックアップ版</title>
+<style>
+html,body{margin:0;width:100%;height:100%;background:#05070d;overflow:hidden;display:flex;align-items:center;justify-content:center}
+canvas{width:min(100vw,calc(100vh * 724 / 543));height:auto;max-height:100vh;aspect-ratio:724/543;background:#000;image-rendering:pixelated;image-rendering:crisp-edges;display:block}
+</style>
+</head>
+<body>
+<canvas id="game" width="724" height="543"></canvas>
+<script>
+"use strict";
+const W=724,H=543;
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+ctx.imageSmoothingEnabled=false;
+
+const mockup=new Image();
+const commands=["説明する","根回し","条件調整","市場を見る"];
+const commandRows=[
+  {x:356,y:390,w:142,h:31},
+  {x:356,y:429,w:142,h:31},
+  {x:356,y:468,w:142,h:31},
+  {x:356,y:507,w:142,h:31}
+];
+const gameState={
+  selectedCommand:0,
+  cfoPressure:100,
+  stamina:620,
+  nemawashi:580,
+  trust:460,
+  demand:70,
+  spread:80,
+  message:"強気CFOドラゴンが あらわれた！"
+};
+
+function rect(x,y,w,h,c){ctx.fillStyle=c;ctx.fillRect(x|0,y|0,w|0,h|0)}
+function text(s,x,y,c,size=24){
+  ctx.fillStyle=c;
+  ctx.font=`${size}px "MS Gothic","Yu Gothic",monospace`;
+  ctx.textBaseline="top";
+  ctx.fillText(s,x,y);
+}
+function strokeText(s,x,y,c,size=24){
+  ctx.font=`bold ${size}px "MS Gothic","Yu Gothic",monospace`;
+  ctx.textBaseline="top";
+  ctx.lineWidth=4;
+  ctx.strokeStyle="#05070d";
+  ctx.strokeText(s,x,y);
+  ctx.fillStyle=c;
+  ctx.fillText(s,x,y);
+}
+function drawCommandHighlight(){
+  const row=commandRows[gameState.selectedCommand];
+  // 元画像のUIを壊さないよう、選択行にだけ薄い青を重ねる
+  rect(row.x,row.y,row.w,row.h,"rgba(50,130,235,.34)");
+  rect(row.x,row.y,row.w,2,"rgba(120,220,255,.70)");
+  text("▶",row.x-25,row.y+3,"#fff8d0",25);
+}
+function drawMessage(){
+  // 元画像の下部メッセージ欄だけを軽く上書きする
+  rect(19,492,686,43,"rgba(0,0,0,.58)");
+  strokeText(gameState.message,35,504,"#fff6d8",24);
+  if(gameState.cfoPressure<=0){
+    strokeText("条件決定へ 進め！",35,527,"#fff6d8",20);
+  }
+}
+function draw(){
+  ctx.drawImage(mockup,0,0,W,H);
+  drawCommandHighlight();
+  drawMessage();
+  requestAnimationFrame(draw);
+}
+function runCommand(){
+  const cmd=commands[gameState.selectedCommand];
+  if(cmd==="説明する"){
+    gameState.cfoPressure=Math.max(0,gameState.cfoPressure-15);
+    gameState.trust+=10;
+    gameState.stamina=Math.max(0,gameState.stamina-5);
+    gameState.message="主幹事ヒーローは 丁寧に説明した。";
+  }else if(cmd==="根回し"){
+    gameState.cfoPressure=Math.max(0,gameState.cfoPressure-20);
+    gameState.demand+=10;
+    gameState.nemawashi=Math.max(0,gameState.nemawashi-10);
+    gameState.message="投資家需要が 10億円 あつまった。";
+  }else if(cmd==="条件調整"){
+    gameState.cfoPressure=Math.max(0,gameState.cfoPressure-25);
+    gameState.spread+=5;
+    gameState.trust-=5;
+    gameState.message="この5bpが 今日の命綱だ。";
+  }else{
+    gameState.stamina=Math.max(0,gameState.stamina-5);
+    if(Math.random()<0.5)gameState.cfoPressure=Math.max(0,gameState.cfoPressure-10);
+    gameState.message="マーケットの 風を 読んだ。";
+  }
+  if(gameState.cfoPressure<=0){
+    gameState.message="CFOは しずかに うなずいた。";
+  }
+}
+addEventListener("keydown",e=>{
+  if(["ArrowUp","ArrowDown","Enter"," "].includes(e.key))e.preventDefault();
+  if(e.key==="ArrowUp")gameState.selectedCommand=(gameState.selectedCommand+commands.length-1)%commands.length;
+  else if(e.key==="ArrowDown")gameState.selectedCommand=(gameState.selectedCommand+1)%commands.length;
+  else if(e.key==="Enter"||e.key===" ")runCommand();
+});
+function loadMockup(paths,i=0){
+  mockup.onload=draw;
+  mockup.onerror=()=>{
+    if(i+1<paths.length)loadMockup(paths,i+1);
+    else{
+      rect(0,0,W,H,"#000");
+      text("battle_mockup画像が見つかりません",40,60,"#fff",28);
+    }
+  };
+  mockup.src=paths[i];
+}
+loadMockup([
+  "../../assets/battle_mockup.png",
+  "../../assets/battle_cfo/battle_mockup.png",
+  "../../assets/battle_cfo/battle_mockup_reference.png"
+]);
+</script>
+</body>
+</html>

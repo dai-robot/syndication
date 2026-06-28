@@ -1,0 +1,1906 @@
+﻿<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <title>デットシンジケート - 百億円を完売せよ -</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      min-height: 100%;
+      background: #000;
+      overflow: hidden;
+      overscroll-behavior: none;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+    }
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: var(--app-height, 100svh);
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+      box-sizing: border-box;
+    }
+    canvas {
+      width: min(768px, 100vw, calc(var(--app-height, 100svh) * 256 / 224));
+      height: auto;
+      max-height: var(--app-height, 100svh);
+      aspect-ratio: 256 / 224;
+      background: #000;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      display: block;
+      touch-action: none;
+    }
+    @media (max-width: 430px) and (orientation: portrait) {
+      body {
+        align-items: flex-start;
+        justify-content: center;
+        padding-top: max(env(safe-area-inset-top), 6px);
+      }
+      canvas {
+        width: 100vw;
+        max-width: 100vw;
+        margin-top: 0;
+      }
+    }
+    @media (max-width: 430px) and (orientation: landscape) {
+      canvas {
+        width: auto;
+        height: var(--app-height, 100svh);
+        max-width: 100vw;
+      }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="256" height="224"></canvas>
+  <script>
+  "use strict";
+
+  /* =========================================================================
+     デットシンジケート - 百億円を完売せよ -
+     SFC風 コマンドバトル画面 (「強気CFOドラゴン」戦)
+     - 256x224 / Canvas 1枚のみ。外部画像・音源・ライブラリ不使用
+     - 背景/人物/顔グラ/UI はすべて専用ドット絵をCanvasに描画
+     ========================================================================= */
+
+  const canvas = document.getElementById("gameCanvas");
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = false;
+  const IS_TOUCH = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+
+  function syncViewportHeight() {
+    document.documentElement.style.setProperty("--app-height", window.innerHeight + "px");
+  }
+  syncViewportHeight();
+  window.addEventListener("resize", syncViewportHeight);
+  window.addEventListener("orientationchange", function () { setTimeout(syncViewportHeight, 250); });
+
+  const VW = 256, VH = 224;
+
+  // ----------------------------------------------------------------- 色
+  const C = {
+    black:"#000000", frame:"#f8f8f8", gray:"#9ca3af", dgray:"#4b5563",
+    win0:"#0a0e22", win1:"#10162e", panel:"#101830", panelHi:"#1c2748",
+    blue:"#3b82f6", dblue:"#1e3a8a", yellow:"#facc15", amber:"#f59e0b",
+    red:"#ef4444", dred:"#991b1b", green:"#22c55e", teal:"#2f8f8a"
+  };
+
+  function rect(x, y, w, h, color) { ctx.fillStyle = color; ctx.fillRect(x|0, y|0, w|0, h|0); }
+  function text(str, x, y, color, size) {
+    ctx.fillStyle = color || C.frame;
+    ctx.font = (size||10) + "px 'MS Gothic','Courier New',monospace";
+    ctx.textBaseline = "top";
+    ctx.fillText(str, x, y);
+  }
+
+  // ASCII UI用の3x5ビットマップフォント。金融端末風の小さな数字/英字はこれで描く。
+  const BF = {
+    "0":["111","101","101","101","111"],"1":["010","110","010","010","111"],"2":["111","001","111","100","111"],"3":["111","001","111","001","111"],"4":["101","101","111","001","001"],
+    "5":["111","100","111","001","111"],"6":["111","100","111","101","111"],"7":["111","001","010","010","010"],"8":["111","101","111","101","111"],"9":["111","101","111","001","111"],
+    "A":["010","101","111","101","101"],"B":["110","101","110","101","110"],"C":["111","100","100","100","111"],"D":["110","101","101","101","110"],"E":["111","100","110","100","111"],
+    "F":["111","100","110","100","100"],"G":["111","100","101","101","111"],"H":["101","101","111","101","101"],"I":["111","010","010","010","111"],"J":["001","001","001","101","111"],
+    "K":["101","101","110","101","101"],"L":["100","100","100","100","111"],"M":["101","111","111","101","101"],"N":["101","111","111","111","101"],"O":["111","101","101","101","111"],
+    "P":["111","101","111","100","100"],"Q":["111","101","101","111","001"],"R":["111","101","111","110","101"],"S":["111","100","111","001","111"],"T":["111","010","010","010","010"],
+    "U":["101","101","101","101","111"],"V":["101","101","101","101","010"],"W":["101","101","111","111","101"],"X":["101","101","010","101","101"],"Y":["101","101","010","010","010"],"Z":["111","001","010","100","111"],
+    "/":["001","001","010","100","100"],"-":["000","000","111","000","000"],"+":["000","010","111","010","000"],":":["000","010","000","010","000"],".":["000","000","000","000","010"]," ":["000","000","000","000","000"]
+  };
+  function btext(str, x, y, color, scale) {
+    scale = scale || 1;
+    str = String(str).toUpperCase();
+    for (let i = 0; i < str.length; i++) {
+      const glyph = BF[str[i]] || BF[" "];
+      for (let r = 0; r < glyph.length; r++) {
+        for (let c = 0; c < 3; c++) if (glyph[r][c] === "1") rect(x + i * 4 * scale + c * scale, y + r * scale, scale, scale, color || C.frame);
+      }
+    }
+  }
+
+  // 文字配列 -> ドット絵。tint指定で不透明ピクセルを単色化(被ダメ点滅用)
+  function drawArt(art, x, y, pal, scale, tint) {
+    scale = scale || 1;
+    for (let r = 0; r < art.length; r++) {
+      const row = art[r]; if (!row) continue;
+      for (let c = 0; c < row.length; c++) {
+        const base = pal[row[c]];
+        if (base) rect(x + c*scale, y + r*scale, scale, scale, tint || base);
+      }
+    }
+  }
+
+  // ----------------------------------------------------------------- パレット
+  const P = {
+    ".":null,
+    K:"#0b1020",   // 輪郭
+    o:"#060a16",   // 濃輪郭
+    W:"#f4f5f7",   // 白(シャツ/紙)
+    w:"#cdd4e0",   // 灰白
+    S:"#22305f",   // 紺スーツ
+    s:"#161f42",   // 紺影
+    z:"#34467f",   // 紺ハイライト
+    T:"#2f8f8a",   // 鱗
+    t:"#1f6b66",   // 鱗影
+    g:"#5fd6c8",   // 鱗ハイ
+    y:"#facc15",   // 目/金
+    Y:"#fde68a",   // 目ハイ
+    r:"#dc2626",   // ネクタイ赤
+    R:"#991b1b",   // 赤影
+    m:"#5b1414",   // 口内
+    h:"#d9c9a3",   // 角
+    H:"#a8946b",   // 角影
+    b:"#f1c79b",   // 肌
+    B:"#cf9a63",   // 肌影
+    n:"#6b3f1f",   // 髪
+    N:"#3f2410",   // 髪影
+    p:"#eef2f7",   // 紙
+    q:"#9aa6bd"    // 紙影
+  };
+
+  // ----------------------------------------------------------- 発行体CFO
+  // 約24x34px。scale2で 48x68 に拡大して表示する専用スプライト。
+  const SPR_CFO = [
+    ".......KKKKKKKK.......",
+    ".....KKwwwwwwwwKK.....",
+    "....KwwwwqqwwwwwwK....",
+    "...KwwwqKKKKqwwwwwK...",
+    "...KwwKbbbbbbKwwwwK...",
+    "...KwKbbbbbbbbKwwwK...",
+    "....KbbBbbbbBbbK......",
+    "....KbKKbbbbKKbK......",
+    "....KbyKbbbbKybK......",
+    "....KbbbbbbbbbbK......",
+    "....KbbbbKbbbbbK......",
+    ".....KbbbBBbbbK.......",
+    "......KbbbbbbK........",
+    ".......KKbbKK.........",
+    "......KKWWWWKK........",
+    "....KKSSWrrWSSKK......",
+    "...KSSSSWrrWSSSSK.....",
+    "..KSSzSSWrrWSSzSSK....",
+    "..KSSSSSWrrWSSSSSK....",
+    ".KSSSSSSSrrSSSSSSSK...",
+    ".KSSzSSSSrrSSSSzSSK...",
+    ".KSSSSSSSSSSSSSSSSK...",
+    ".KSSSSSSSSSSSSSSSSK...",
+    ".KsSSSSSSSSSSSSSSsK...",
+    "..KSSSSSSSSSSSSSSK....",
+    "..KSSSSSSSSSSSSSSK....",
+    "...KSSSSSSSSSSSSK.....",
+    "...KSSSSSSSSSSSSK.....",
+    "....KSSSSSSSSSSK......",
+    "....KSSSSSSSSSSK......",
+    ".....KKSSSSSSKK.......",
+    "......KKKKKKKK........",
+    "......KK....KK........",
+    ".....KKK....KKK......."
+  ];
+
+  // ----------------------------------------------------------- 味方: 主幹事の勇者
+  // 約20x26px。scale2で 40x52 に拡大表示。
+  const SPR_HERO = [
+    "......KKKKKK........",
+    ".....KNNNNNNK.......",
+    "....KNNNNNNNNK......",
+    "....KNbbbbbbNK......",
+    "....KbbbbbbbbK......",
+    "....KbKbbbbKbK......",
+    "....KbbbbbbbbK......",
+    "....KbbbmmbbbK......",
+    ".....KbbbbbbK.......",
+    "......KWWWWK........",
+    ".....KSzWrWzSK......",
+    "....KSSWrrWSSK......",
+    "...KSSzWrrWzSSK.....",
+    "...SSSSWrrWSSSS.....",
+    "..pSSSWrrrWSSSp.....",
+    "..pppSSrrSSSppp.....",
+    "..pWWpSSSSSpWWp.....",
+    "..pWWpppppppWWp.....",
+    "..pppppppppppp p....",
+    "...SSSSSSSSSSS......",
+    "...SSSSSSSSSSSS.....",
+    "...SSSSS.SSSSS......",
+    "...SSSS...SSSS......",
+    "...KSSK...KSSK......",
+    "...KKKK...KKKK......"
+  ];
+
+  // ----------------------------------------------------------- 顔グラ (16x16)
+  const FACE_HERO = [
+    "....KKKKKK......",
+    "...KNNNNNNK.....",
+    "..KNNNNNNNNK....",
+    "..KNbbbbbbNK....",
+    "..KbbbbbbbbK....",
+    "..KbKbbbbKbK....",
+    "..KbbbbbbbbK....",
+    "..KbbbmmbbbK....",
+    "...KbbbbbbK.....",
+    "...KWWWWWWK.....",
+    "..KSzWrrWzSK....",
+    ".KSSWWrrWWSSK...",
+    ".SSSSWrrWSSSS...",
+    ".SSSSWWWWSSSS...",
+    ".KSSSSSSSSSSK...",
+    "..KKKKKKKKKK...."
+  ];
+  const FACE_CFO = [
+    "...KKKKKKKK.....",
+    "..KwwwwwwwwK....",
+    ".KwwwqqqwwwwwK...",
+    ".KwwKbbbbKwwwK...",
+    "..KbbbbbbbbK.....",
+    "..KbKbbbbKbK.....",
+    "..KbyKbbKybK.....",
+    "..KbbbbbbbbK.....",
+    "...KbbbBbbK......",
+    "....KbbbbK.......",
+    "...KKWWWWKK......",
+    "..KSSWrrWSSK.....",
+    ".KSSSWrrWSSSK....",
+    ".KSSSSrrSSSSK....",
+    ".KSSSSSSSSSSK....",
+    "..KKSSSSSSKK....."
+  ];
+
+  // ----------------------------------------------------------- タイトル用パレット/絵
+  // 16bit JRPGタイトル画面向け:
+  //   夕焼け / 巨大ドラゴンシルエット / ビル屋上の2人
+  const TP = {
+    ".":null,
+    "#":"#2a1306",  // 黒に近いシルエット
+    "D":"#3d220f",  // シルエット明
+    "h":"#6cb8e0", "H":"#3f7fae",  // 青髪
+    "o":"#e0863a", "O":"#b25e1d",  // オレンジ衣装
+    "n":"#7a4a1f", "N":"#4a2c12",  // 茶髪
+    "b":"#f6e3c8", "B":"#e9cba6",  // 肌
+    "W":"#f4f5f7",                  // 白
+    "k":"#1b0e05",                  // 目/輪郭
+    "p":"#d9618f", "P":"#8a2f57",   // ピンクパネル
+    "u":"#2f5f9f", "U":"#8fb6df",   // 青い服
+    "v":"#9a3f72", "V":"#d9618f",   // 紫の服
+    "s":"#17111f", "S":"#2b2740",   // ブーツ/影
+    "r":"#d84a4a", "R":"#8a1f2f",   // 赤い布
+    "y":"#facc15"
+  };
+
+  // タイトル画面用の巨大シルエット。scale2で約72x82。
+  const SIL = [
+    "..#..........................#..",
+    "..##........................##..",
+    "...##......................##...",
+    "....##....................##....",
+    ".....##..................##.....",
+    "......##....######......##......",
+    ".......##..##########..##.......",
+    "........###############.........",
+    "........###############.........",
+    ".........#############..........",
+    "........###############.........",
+    ".......#################........",
+    "......###################.......",
+    ".....#####################......",
+    ".....#####################......",
+    "....#######################.....",
+    "....#######################.....",
+    "...#########################....",
+    "...#########################....",
+    "..###########################...",
+    "..###########################...",
+    ".#############################..",
+    ".#############################..",
+    "#############################D#.",
+    "##############################D.",
+    "##############################D.",
+    "###############################D",
+    "###############################D",
+    "###############################D",
+    "###############################D",
+    "###############################D",
+    "###############################D"
+  ];
+
+  // 塔の上のちびキャラ(8x11)
+  const CH_BLUE = [
+    "..hhhh..",
+    ".hhhhhh.",
+    ".hbbbbh.",
+    ".bkbbkb.",
+    ".bbbbbb.",
+    "..kWWk..",
+    ".WWWWWW.",
+    ".WWWWWW.",
+    ".kW..Wk.",
+    ".#....#.",
+    "..#..#.."
+  ];
+  const CH_GIRL = [
+    "..nnnn..",
+    ".nnnnnnN",
+    ".nbbbbnN",
+    ".bkbbkbN",
+    ".bbbbbb.",
+    "..oOOo..",
+    ".oOOOOo.",
+    ".oOOOOo.",
+    ".ko..ok.",
+    ".#....#.",
+    "..#..#.."
+  ];
+
+  // タイトル画面の屋上キャラ(16x30級)。拡大せず1px単位で描く。
+  const TITLE_HERO_BLUE = [
+    ".....kkkkkk.....",
+    "....kHHHHHHk....",
+    "...kHHhhhhHHk...",
+    "...kHhbbbbhHk...",
+    "...khbBbbBbhk...",
+    "....kbkbbkbk....",
+    "....kbbbbbbk....",
+    ".....kbBBbk.....",
+    "......kbbk......",
+    "....rrkWWk......",
+    "...rRkuuUuk.....",
+    "..rR.kuWuUk.....",
+    ".....kuuyuUk....",
+    "....kuuuyuUk....",
+    "...kuUuuyuUuk...",
+    "...kuUuWyuUuk...",
+    "...kuuuuuuUuk...",
+    "....kuUUUUuk....",
+    ".....kssssk.....",
+    ".....kSssSk.....",
+    ".....ks..sk.....",
+    ".....ks..sk.....",
+    ".....ks..sk.....",
+    "....kss..ssk....",
+    "....kkk..kkk....",
+    "....kk....kk....",
+    "................",
+    "................"
+  ];
+  const TITLE_HERO_GIRL = [
+    ".....kkkkk......",
+    "....kNNNNNk.....",
+    "...kNnnnnNNk....",
+    "...kNnbbbbNk....",
+    "...knbBbbBnk....",
+    "....kbkbbkbk....",
+    "....kbbbbbbk....",
+    ".....kbBBbk.....",
+    "......kbbk......",
+    "......kWWk..oo..",
+    ".....kvVVvk.oO..",
+    "....kvWVWvkoO...",
+    "....kvvyyvvk....",
+    "...kvVvyyVvk....",
+    "...kvVvvvvVvk...",
+    "...kvvWvvvVvk...",
+    "....kvVVVVvk....",
+    ".....kssssk.....",
+    ".....kSssSk.....",
+    ".....ks..sk.....",
+    ".....ks..sk.....",
+    ".....ks..sk.....",
+    "....kss..ssk....",
+    "....kkk..kkk....",
+    "....kk....kk....",
+    "................",
+    "................"
+  ];
+
+  // =======================================================================
+  //  ステータス / 戦闘状態
+  // =======================================================================
+  const STAT_MAX = { stamina:150, nemawashi:100, review:100, demand:300, trust:100, spread:300, market:100 };
+
+  const game = {
+    tick:0,
+    mode:"title",                  // title -> opening -> battle
+    stats:{ stamina:102, nemawashi:36, review:25, demand:70, trust:40, spread:115, market:55 }
+  };
+
+  // オープニング(約20秒のSFC風ドット絵ムービー / 時間ベース)
+  const op = { start: 0 };
+  const OP_DUR = 20400;       // ms (約20秒)
+  const ED_DUR = 10000;       // ms (エンディング約10秒)
+  const ending = { start: 0, result: "win", reason: "", grade: "", spread: 0, turns: 0, book: 0 };
+
+  const ENEMY = { name:"100億円 シニア社債" };
+  const SIZE = 100;            // 目標オーダー額(億円)
+
+  // ブックビルディングのコマンド
+  const COMMANDS = [
+    { id:"widen",     label:"ワイドニング" },   // 需要↑(気力↓)
+    { id:"tighten",   label:"タイトニング" },   // 気力回復(需要↓)
+    { id:"explain",   label:"ロードショー" },
+    { id:"nemawashi", label:"ディール" }
+  ];
+
+  const battle = {
+    book: 0,                   // 集まったオーダー累計(億)。SIZE到達で完売=勝利
+    shown: 0,                  // ゲージ表示値(なめらかに増やす)
+    remaining: SIZE,           // 未販売残高。約定のたびに100億円から減る
+    shownRemaining: SIZE,
+    rate: 5,                   // 毎ターンの投資家オーダー額トレンド(億)
+    trend: 0,                  // 直近の傾き(+1↑ / -1↓ / 0)
+    turn: 1, turnLimit: 15,
+    cursor: 0,
+    phase: "intro",            // intro / command / dealAnim / result / win / lose
+    pages: [],                 // 表示メッセージ(ページ配列)
+    pi: 0, typed: 0,
+    pending: null,             // {amount, pages, after}
+    animT: 0, animHit: false,
+    screenShake: 0, dealFlash: 0,
+    ticketT: 0, ticketAmount: 0, ticketName: "",
+    next: null
+  };
+
+  function setPages(pages, next) { battle.pages = pages; battle.pi = 0; battle.typed = 0; battle.next = next || null; }
+  function curPage() { return battle.pages[battle.pi] || ["", ""]; }
+  function pageLen() { const p = curPage(); return (p[0]||"").length + (p[1]||"").length; }
+
+  function applyStat(obj) {
+    for (const k in obj) {
+      const max = STAT_MAX[k] || 999;
+      game.stats[k] = Math.max(0, Math.min(max, (game.stats[k]||0) + obj[k]));
+    }
+  }
+
+  function startBattle() {
+    battle.book = 0; battle.shown = 0;
+    battle.remaining = SIZE; battle.shownRemaining = SIZE;
+    battle.rate = 5; battle.trend = 0; battle.turn = 1;
+    battle.cursor = 0; battle.phase = "intro";
+    battle.pending = null; battle.animT = 0; battle.animHit = false;
+    battle.screenShake = 0; battle.dealFlash = 0;
+    battle.ticketT = 0; battle.ticketAmount = 0; battle.ticketName = "";
+    game.stats = { stamina:102, nemawashi:36, review:25, demand:0, trust:40, spread:115, market:55 };
+    setPages([
+      ["100億円 シニア社債の マンデート！", ""],
+      ["販売残高は 100億円。", "投資家オーダーで 完売をめざせ。"],
+      ["条件を動かせば 需要も動く。", "主幹事の腕の 見せどころだ。"]
+    ], toCommand);
+  }
+  function toCommand() {
+    battle.phase = "command";
+    setPages([["コマンドを えらべ。", ""]], null);
+  }
+
+  // -------------------------------------------------- コマンド(ブックビルディング)
+  function resolveCommand(id) {
+    applyStat({ stamina:-2 });          // 1ターンの基礎消耗(時間経過)
+    let imm = 0;                        // このターンの追加オーダー(億)
+    let pages = [];
+
+    if (id === "widen") {
+      applyStat({ stamina:-9, spread:5 });
+      battle.rate = Math.min(16, battle.rate + 3);
+      battle.trend = 1;
+      pages = [["スプレッドを ワイドに 振った！", ""],
+               ["気力 -9 ／ 需要トレンド ↑", ""]];
+    } else if (id === "tighten") {
+      applyStat({ stamina:11, spread:-5 });
+      battle.rate = Math.max(0, battle.rate - 3);
+      battle.trend = -1;
+      pages = [["スプレッドを タイトに 寄せた", ""],
+               ["気力 回復 ／ 需要トレンド ↓", ""]];
+    } else if (id === "explain") {
+      applyStat({ stamina:-3, trust:4 });
+      battle.rate = Math.min(16, battle.rate + 1);
+      battle.trend = 1; imm = 2;
+      pages = [["ロードショーで 投資家を 口説いた", ""],
+               ["発行体信頼が あがった", ""]];
+    } else if (id === "nemawashi") {
+      if (game.stats.nemawashi < 5) {
+        battle.pending = { amount:0, noTurn:true,
+          pages:[["ディールを 組むには", "根回し力が たりない！"]] };
+        return;
+      }
+      applyStat({ stamina:-4, nemawashi:-5 });
+      battle.trend = 0; imm = 10;
+      pages = [["ディールがまとまり はじめた！", ""],
+               ["まとまった オーダーが 入った", ""]];
+    }
+
+    // このターンに入る投資家オーダー(億)
+    let orders = battle.rate + imm + ((Math.random()*3) | 0);
+    orders = Math.min(battle.remaining, Math.max(0, orders));
+    applyStat({ demand: orders });
+    const after = battle.book + orders;
+    const remainAfter = Math.max(0, SIZE - after);
+    battle.pending = {
+      amount: orders,
+      pages: pages.concat([[
+        "投資家オーダー +" + orders + "億円",
+        "販売残高 " + remainAfter + "億円"
+      ]])
+    };
+  }
+
+  function chooseCommand() {
+    resolveCommand(COMMANDS[battle.cursor].id);
+    if (battle.pending && battle.pending.noTurn) {
+      battle.phase = "result";
+      setPages(battle.pending.pages, function () { toCommand(); });
+      battle.pending = null;
+      return;
+    }
+    battle.phase = "dealAnim";
+    battle.animT = 0; battle.animHit = false;
+  }
+
+  function toWin() {
+    battle.phase = "win";
+    setPages([
+      ["販売残高 0億円！", ""],
+      ["100億円 完売 ―― 起債 成立！", ""]
+    ], function () { startEnding("win"); });
+  }
+  function toLose(reason) {
+    battle.phase = "lose";
+    ending.reason = reason;
+    const head = reason === "time" ? ["条件決定の機を のがした……", "(ターン切れ)"]
+                                   : ["気力が つきはてた……", ""];
+    setPages([
+      head,
+      ["案件は いったん 見送りに……", ""]
+    ], function () { startEnding("lose"); });
+  }
+
+  // =======================================================================
+  //  描画: 背景ステージ(発行体会議室)
+  // =======================================================================
+  function drawStage() {
+    // 壁: 256x224内で多段色と細線を重ね、SFC風の情報密度を出す
+    rect(0, 0, VW, 128, "#20264a");
+    rect(0, 0, VW, 16, "#161a36");          // 天井帯
+    rect(0, 14, VW, 2, "#2c3566");
+    rect(0, 16, VW, 1, "#3b4780");
+    for (let y = 24; y < 112; y += 12) rect(0, y, VW, 1, "#25305e");
+    for (let x = 0; x < VW; x += 24) rect(x, 17, 1, 100, "#1a2248");
+    for (let i = 0; i < 80; i++) {
+      const px = (i * 31) % VW, py = 18 + ((i * 17) % 92);
+      if ((i + (game.tick >> 5)) % 3) rect(px, py, 1, 1, i % 2 ? "#2b376a" : "#182144");
+    }
+    // 左壁の社長室ディテール: 社章プレート、棚、ランプ
+    rect(5, 28, 28, 31, "#0e142b");
+    rect(6, 29, 26, 29, "#251914");
+    rect(8, 32, 22, 1, "#8a6232");
+    text("B+B", 10, 37, "#caa15a", 9);
+    text("HOLDINGS", 8, 48, "#9a6b36", 5);
+    rect(39, 36, 22, 2, "#6b4624");
+    rect(40, 30, 4, 7, "#caa15a"); rect(49, 28, 5, 9, "#facc15"); rect(56, 31, 3, 6, "#8a6232");
+    rect(19, 69, 12, 22, "#2a1a10");
+    rect(16, 66, 18, 6, "#f3c46d"); rect(18, 72, 14, 2, "#8a6232");
+    rect(22, 91, 6, 12, "#4a2a16"); rect(18, 103, 14, 2, "#2a1a10");
+    // 床っぽい帯
+    rect(0, 118, VW, 10, "#2a2030");
+    rect(0, 126, VW, 2, "#15101c");
+
+    // 窓(夜景) 中央右
+    const wx = 104, wy = 18, ww = 132, wh = 70;
+    rect(wx-3, wy-3, ww+6, wh+6, "#0d1024");
+    rect(wx-3, wy-3, ww+6, 2, C.gray);      // 窓枠
+    rect(wx-3, wy+wh+1, ww+6, 2, C.gray);
+    rect(wx-3, wy-3, 2, wh+6, C.gray);
+    rect(wx+ww+1, wy-3, 2, wh+6, C.gray);
+    rect(wx, wy, ww, wh, "#070b1e");        // 夜空
+    rect(wx, wy, ww, 16, "#0a1230");        // 空の帯
+    rect(wx, wy + 16, ww, 16, "#08102a");
+    // 月
+    rect(wx+ww-26, wy+8, 16, 16, "#e8e6c8");
+    rect(wx+ww-22, wy+10, 12, 12, "#070b1e");
+    rect(wx+ww-22, wy+12, 10, 10, "#070b1e");
+    // 星
+    for (let i = 0; i < 34; i++) {
+      const sx = wx + ((i*37) % (ww-6)) + 3;
+      const sy = wy + ((i*19) % (wh-30)) + 3;
+      if ((i + (game.tick>>5)) % 4 !== 0) rect(sx, sy, 1, 1, i%2 ? C.frame : C.gray);
+    }
+    // 遠景ビル(多重スクロール風)
+    const farOff = (game.tick >> 4) % 18;
+    for (let i = -1; i < 10; i++) {
+      const bx = wx + i * 18 - farOff, bh = 14 + ((i * 11) % 18);
+      rect(bx, wy + wh - bh, 12, bh, "#10183a");
+      rect(bx + 10, wy + wh - bh + 2, 1, bh - 2, "#060a18");
+      if (i % 2 === 0) rect(bx + 3, wy + wh - bh + 4, 2, 2, "#27345f");
+    }
+    // ビル群シルエット + 点灯窓
+    const sky = wy + wh;
+    const bld = [[6,28],[24,40],[40,22],[54,34],[72,46],[92,30],[112,38]];
+    for (let i = 0; i < bld.length; i++) {
+      const bx = wx + bld[i][0], bh = bld[i][1];
+      const bw = 16;
+      if (bx + bw > wx + ww) continue;
+      rect(bx, sky - bh, bw, bh, "#1a2350");
+      rect(bx, sky - bh, bw, 1, "#2c376a");
+      if (i % 2) rect(bx + 4, sky - bh - 4, 8, 4, "#11183a");
+      for (let r = 0; r < bh-4; r += 6) {
+        for (let c = 0; c < bw-3; c += 6) {
+          const lit = ((i*7 + r + c + (game.tick>>4)) % 5) < 2;
+          rect(bx+2+c, sky-bh+3+r, 2, 3, lit ? C.yellow : "#0f1636");
+          if (lit) rect(bx+2+c, sky-bh+5+r, 2, 1, "#a16207");
+        }
+      }
+    }
+    // 窓の桟
+    rect(wx + ww/2 - 1, wy, 2, wh, "#11183a");
+    rect(wx, wy + wh/2 - 1, ww, 2, "#11183a");
+    // 半透明っぽい窓の反射(薄い斜線)
+    ctx.fillStyle = "rgba(248,248,248,0.10)";
+    for (let i = 0; i < 4; i++) ctx.fillRect(wx + 12 + i * 28, wy + 2, 2, wh - 4);
+
+    // 観葉植物(左上の空間)
+    rect(223, 89, 12, 27, "#3a2a18");          // 鉢
+    rect(220, 114, 18, 5, "#241a10");
+    for (let i = 0; i < 12; i++) {
+      const a = i - 3;
+      const lx = 229 + (i % 6 - 3) * 3;
+      const ly = 70 + Math.abs(i % 6 - 3) * 4 + ((i / 6) | 0) * 7;
+      rect(lx, ly, 2, 24 - Math.abs(i % 6 - 3) * 3, i % 2 ? "#1f7a3a" : "#0f5f2d");
+    }
+    rect(227, 72, 7, 9, "#27a04a");
+    rect(224, 82, 4, 2, "#42c465");
+    rect(235, 91, 3, 2, "#0f5f2d");
+    // 右側のトロフィー
+    rect(208, 92, 9, 4, "#facc15"); rect(210, 84, 5, 9, "#caa15a");
+    rect(207, 83, 3, 5, "#facc15"); rect(215, 83, 3, 5, "#facc15");
+    rect(209, 98, 7, 2, "#8a6232"); rect(206, 100, 13, 3, "#3a2410");
+  }
+
+  // 机(キャラの手前に重ねる) + 書類
+  function drawDeskFront() {
+    const dy = 106;
+    rect(0, dy, VW, 22, "#5b3a1e");
+    rect(0, dy, VW, 3, "#7a5230");           // 天板ハイライト
+    rect(0, dy+3, VW, 1, "#3a2410");
+    rect(0, 124, VW, 4, "#2e1d0e");          // 机前面影
+    for (let x = 0; x < VW; x += 18) {
+      rect(x, dy + 6, 10, 1, "#6d4726");
+      rect(x + 8, dy + 16, 9, 1, "#3f2813");
+    }
+    // 手前側の机パネルと木目
+    for (let x = 0; x < VW; x += 32) {
+      rect(x + 4, 117, 23, 1, "#7a5230");
+      rect(x + 9, 121, 15, 1, "#3a2410");
+    }
+    rect(0, 127, VW, 1, "#8a6232");
+    // 会議室の名札・水グラス
+    rect(36, 101, 22, 7, "#d9c9a3"); rect(38, 103, 12, 1, "#6b3f1f");
+    rect(66, 99, 5, 9, "#8bd3ff"); rect(67, 100, 3, 2, "#e0f2fe"); rect(66, 106, 5, 1, "#3b82f6");
+    // 書類束
+    for (let i = 0; i < 3; i++) {
+      const px = 150 + i*4, py = 100 - i;
+      rect(px, py, 22, 8, "#eef2f7"); rect(px, py, 22, 1, "#cdd4e0");
+      rect(px+2, py+3, 16, 1, "#9aa6bd"); rect(px+2, py+5, 12, 1, "#9aa6bd");
+    }
+    // 100億 資料(中央)
+    rect(104, 96, 34, 12, "#f4f5f7");
+    rect(104, 96, 34, 1, "#cdd4e0");
+    rect(104, 107, 34, 1, "#9aa6bd");
+    text("100億", 107, 98, "#1e3a8a", 9);
+    // ペン
+    rect(80, 104, 14, 2, "#111827"); rect(92, 104, 3, 2, C.amber);
+    // 細かい契約書の端
+    rect(194, 101, 28, 7, "#f7f0dc"); rect(196, 103, 20, 1, "#9aa6bd"); rect(196, 105, 16, 1, "#9aa6bd");
+    // ノートPCとグラフ資料
+    rect(9, 96, 22, 12, "#111827"); rect(11, 98, 18, 7, "#0a1026"); rect(9, 108, 28, 2, "#4b5563");
+    rect(118, 99, 22, 9, "#f4f5f7"); rect(121, 105, 2, 2, "#3b82f6"); rect(126, 102, 2, 5, "#22c55e"); rect(131, 100, 2, 7, "#f59e0b");
+    // 書類の散らばり
+    for (let i = 0; i < 5; i++) {
+      const px = 62 + i * 11, py = 99 + (i % 2);
+      rect(px, py, 9, 5, "#efe7cf"); rect(px + 1, py + 2, 6, 1, "#9aa6bd");
+    }
+  }
+
+  // =======================================================================
+  //  描画: キャラクター
+  // =======================================================================
+  // 足元の楕円シャドウ(キャラを地に立たせる)
+  function drawShadow(cx, y, w) {
+    ctx.fillStyle = "rgba(10,8,4,0.45)";
+    ctx.fillRect(cx - w/2 + 3, y,     w - 6, 2);
+    ctx.fillRect(cx - w/2,     y + 2, w,     2);
+    ctx.fillRect(cx - w/2 + 3, y + 4, w - 6, 1);
+  }
+
+  function drawCfoFineDetails(x, y) {
+    // 発行体CFO: 銀髪、眼鏡、スーツの1pxディテール
+    const glint = (game.tick >> 2) % 2 === 0;
+    rect(x + 14, y + 17, 8, 3, "#111827"); rect(x + 28, y + 17, 8, 3, "#111827");
+    rect(x + 22, y + 18, 6, 1, "#4b5563");
+    if (glint) { rect(x + 16, y + 17, 2, 1, "#f8f8f8"); rect(x + 30, y + 17, 2, 1, "#f8f8f8"); }
+    rect(x + 22, y + 29, 7, 1, "#8f5f42");
+    rect(x + 13, y + 38, 1, 22, "#4b5ea0"); rect(x + 36, y + 38, 1, 22, "#101734");
+    rect(x + 31, y + 45, 3, 2, "#facc15");
+    rect(x + 21, y + 34, 8, 1, "#f4f5f7");
+    rect(x + 22, y + 38, 2, 15, "#991b1b"); rect(x + 24, y + 38, 1, 15, "#dc2626");
+  }
+
+  function drawManagerFineDetails(x, y) {
+    // 髪・顔・鎧/スーツに細線を足して16x32キャラ風に見せる
+    rect(x + 13, y + 5, 5, 1, "#8a5428");
+    rect(x + 20, y + 6, 6, 1, "#3f2410");
+    rect(x + 15, y + 16, 2, 1, "#f8f8f8");
+    rect(x + 25, y + 16, 2, 1, "#f8f8f8");
+    rect(x + 19, y + 22, 6, 1, "#cf9a63");
+    rect(x + 16, y + 34, 12, 1, "#556bb0");
+    rect(x + 18, y + 38, 8, 1, "#f4f5f7");
+    rect(x + 21, y + 32, 3, 14, "#fde68a"); // ネクタイ留め風の金線
+    rect(x + 22, y + 33, 1, 10, "#facc15");
+    rect(x + 12, y + 31, 7, 1, "#22305f"); rect(x + 25, y + 31, 7, 1, "#161f42");
+    rect(x + 16, y + 13, 1, 1, "#f8f8f8"); rect(x + 25, y + 13, 1, 1, "#f8f8f8");
+    rect(x + 18, y + 18, 6, 1, "#6b3f1f");
+    // 持っている資料の細線
+    rect(x + 3, y + 34, 8, 1, "#9aa6bd");
+    rect(x + 31, y + 34, 8, 1, "#9aa6bd");
+    rect(x + 4, y + 37, 6, 1, "#cdd4e0");
+    rect(x + 32, y + 37, 6, 1, "#cdd4e0");
+  }
+
+  function drawCharacters() {
+    // 発行体CFO (左中央)
+    const cfoFrame = (Math.floor(game.tick / 24) % 4);
+    const ex = 40 + (cfoFrame === 1 ? 1 : cfoFrame === 3 ? -1 : 0);
+    const ey = 36 + (cfoFrame === 2 ? 1 : 0);
+    drawShadow(64, 103, 46);
+    drawArt(SPR_CFO, ex, ey, P, 2);
+    drawCfoFineDetails(ex, ey);
+    // CFOの手元: 書類確認と小さな頷き
+    if (cfoFrame === 2) rect(ex + 6, ey + 58, 9, 2, "#eef2f7");
+
+    // 主幹事担当者: 電話と端末入力で約定を取る
+    const work = battle.phase === "dealAnim";
+    const tap = work ? (Math.floor(battle.animT / 4) % 2) : (Math.floor(game.tick / 28) % 2);
+    const hx = 196 + (tap ? 1 : 0);
+    const hy = 64 + (tap && !work ? 1 : 0);
+    drawShadow(215, 113, 36);
+    const sx = battle.screenShake>0 ? ((game.tick%2)?1:-1) : 0;
+    drawArt(SPR_HERO, hx + sx, hy, P, 2);
+    drawManagerFineDetails(hx + sx, hy);
+    // 電話・端末・入力カーソル
+    rect(hx + 36, hy + 22, 5, 9, "#0b1020");
+    rect(hx + 38, hy + 23, 1, 6, "#cdd4e0");
+    rect(hx - 10, hy + 46, 28, 10, "#111827");
+    rect(hx - 8, hy + 48, 24, 5, "#0a1026");
+    if (work && tap) rect(hx + 4, hy + 50, 4, 1, "#7dffb0");
+  }
+
+  // 約定演出: 投資家チケットがブックへ吸収され、販売残高が更新される
+  function drawNumber(str, x, y, color) {
+    ctx.font = "bold 12px 'MS Gothic','Courier New',monospace";
+    ctx.textBaseline = "top";
+    ctx.fillStyle = "#1b0e05";
+    ctx.fillText(str, x-1, y); ctx.fillText(str, x+1, y);
+    ctx.fillText(str, x, y-1); ctx.fillText(str, x, y+1);
+    ctx.fillStyle = color;
+    ctx.fillText(str, x, y);
+  }
+  function drawEffects() {
+    if (battle.ticketT > 0) {
+      const t = 50 - battle.ticketT;
+      const x = Math.min(104, -52 + t * 4);
+      const y = 52 + Math.sin(t / 5) * 2;
+      rect(x, y, 58, 20, "#efe7cf");
+      rect(x, y, 58, 2, "#caa15a");
+      rect(x, y + 18, 58, 2, "#9a6b36");
+      rect(x + 2, y + 4, 54, 1, "#9aa6bd");
+      btext(battle.ticketName || "INVESTOR", x + 4, y + 6, "#1f2937", 1);
+      btext("+" + battle.ticketAmount + " OKU", x + 4, y + 13, "#1e3a8a", 1);
+      // ブック側へ吸収される光のライン
+      if (t > 18) {
+        const lx = Math.min(156, x + 58 + (t - 18) * 3);
+        rect(x + 58, y + 10, lx - (x + 58), 1, "#7dffb0");
+        rect(153, 95, 18, 10, "#f4f5f7");
+        btext("BOOK", 156, 98, "#1e3a8a", 1);
+      }
+    }
+    if (battle.dealFlash > 0) {
+      ctx.fillStyle = "rgba(255,240,168,0.30)";
+      ctx.fillRect(0, 0, VW, 128);
+    }
+    if (battle.phase === "win") {
+      rect(50, 45, 156, 38, "rgba(2,6,23,0.88)");
+      rect(52, 47, 152, 34, "#caa15a");
+      rect(54, 49, 148, 30, "#0a0e22");
+      btext("SOLD OUT", 75, 55, "#fff0a8", 2);
+      btext("100 OKU COMPLETE", 72, 72, "#7dffb0", 1);
+    }
+  }
+
+  // 販売残高ゲージ(100億円から約定分だけ減る)
+  function drawDealHeader() {
+    drawWindow(32, 4, 192, 36);
+    btext("PRIMARY BOOK", 42, 9, "#fff0a8", 1);
+    text("販売残高", 42, 20, C.gray, 8);
+    text(Math.ceil(battle.shownRemaining) + "億円", 157, 16, battle.remaining <= 20 ? C.red : C.frame, 14);
+    const bx = 84, by = 30, bw = 118, bh = 5;
+    rect(bx-1, by-1, bw+2, bh+2, "#caa15a");
+    rect(bx, by, bw, bh, "#14213a");
+    const remainRatio = Math.max(0, battle.shownRemaining / SIZE);
+    rect(bx, by, Math.round(bw * remainRatio), bh, remainRatio < .25 ? C.red : "#e5a43a");
+    rect(bx, by, Math.round(bw * remainRatio), 1, "rgba(255,255,255,0.45)");
+    btext("100 OKU", 42, 30, "#9ca3af", 1);
+  }
+
+  // =======================================================================
+  //  描画: 下部UI
+  // =======================================================================
+  function drawWindow(x, y, w, h) {
+    rect(x, y, w, h, "#020617");
+    rect(x+1, y+1, w-2, h-2, "#caa15a");
+    rect(x+2, y+2, w-4, h-4, C.win0);
+    rect(x+4, y+4, w-8, h-8, C.win1);
+    rect(x+3, y+3, w-6, 1, "#25345f");
+    rect(x+3, y+h-4, w-6, 1, "#050815");
+    for (let yy = y + 6; yy < y + h - 5; yy += 5) {
+      for (let xx = x + 6 + (yy % 2); xx < x + w - 5; xx += 7) {
+        rect(xx, yy, 1, 1, "#17203e");
+      }
+    }
+  }
+
+  function drawFace(art, x, y) {
+    rect(x-1, y-1, 34, 34, C.frame);
+    rect(x, y, 32, 32, C.win0);
+    drawArt(art, x, y, P, 2);
+  }
+
+  function statLine(label, value, x, y, color) {
+    text(label, x, y, C.gray, 8);
+    text(value, x + 34, y, color || C.frame, 8);
+  }
+
+  function miniGauge(x, y, w, ratio, color) {
+    rect(x-1, y-1, w+2, 5, "#020617");
+    rect(x, y, w, 3, "#263044");
+    rect(x, y, Math.max(1, Math.round(w * Math.max(0, Math.min(1, ratio)))), 3, color);
+    rect(x, y, Math.max(1, Math.round(w * Math.max(0, Math.min(1, ratio)))), 1, "rgba(255,255,255,0.35)");
+  }
+
+  function drawUI() {
+    // --- 上段: 左=味方パネル / 右=発行体(CFO)パネル ---
+    // 味方
+    drawWindow(3, 130, 124, 46);
+    drawFace(FACE_HERO, 8, 137);
+    btext("LEAD DESK", 46, 134, C.yellow, 1);
+    text("気力", 46, 145, C.gray, 8); text(game.stats.stamina + "/150", 65, 145, C.frame, 8);
+    miniGauge(100, 147, 22, game.stats.stamina / 150, game.stats.stamina<30 ? C.red : C.green);
+    text("根回", 46, 155, C.gray, 8); text(game.stats.nemawashi + "/100", 65, 155, C.frame, 8);
+    miniGauge(100, 157, 22, game.stats.nemawashi / 100, C.blue);
+    text("DAY", 46, 165, C.yellow, 8); text(battle.turn + "/" + battle.turnLimit, 70, 165, battle.turn>battle.turnLimit-3 ? C.red : C.frame, 8);
+
+    // 案件(オーダー集計)
+    drawWindow(129, 130, 124, 46);
+    drawFace(FACE_CFO, 134, 137);
+    btext("BOOK", 172, 134, C.yellow, 1);
+    text("残額", 172, 145, C.gray, 8); text(Math.ceil(battle.shownRemaining) + "億", 194, 145, battle.remaining<=20 ? C.red : C.frame, 8);
+    miniGauge(224, 147, 22, battle.shownRemaining / SIZE, battle.remaining<=20 ? C.red : C.amber);
+    const arrow = battle.trend > 0 ? "↑" : battle.trend < 0 ? "↓" : "→";
+    const acol = battle.trend > 0 ? C.green : battle.trend < 0 ? C.red : C.frame;
+    text("受注", 172, 155, C.gray, 8); text(Math.floor(battle.shown) + "/" + SIZE, 194, 155, C.frame, 8);
+    miniGauge(224, 157, 22, battle.shown / SIZE, C.blue);
+    text("FLOW", 172, 165, C.yellow, 8);
+    text(battle.rate + "億", 198, 165, C.frame, 8);
+    text(arrow, 240, 156, acol, 9);
+
+    // --- 下段: コマンド or メッセージ(全幅) ---
+    drawWindow(3, 178, 250, 44);
+    if (battle.phase === "command") {
+      btext("COMMAND", 12, 184, C.yellow, 1);
+      for (let i = 0; i < COMMANDS.length; i++) {
+        const cx = 16 + (i%2)*120;
+        const cy = 196 + ((i/2)|0)*13;
+        const sel = i === battle.cursor;
+        if (sel && (game.tick>>3)%2 === 0) text("▶", cx-10, cy, C.yellow, 10);
+        text(COMMANDS[i].label, cx, cy, sel ? C.yellow : C.frame, 10);
+      }
+    } else {
+      const p = curPage();
+      let s0 = p[0]||"", s1 = p[1]||"";
+      if (battle.typed <= s0.length) { s0 = s0.slice(0, battle.typed); s1 = ""; }
+      else { s1 = s1.slice(0, battle.typed - (p[0]||"").length); }
+      text(s0, 12, 186, C.frame, 11);
+      text(s1, 12, 204, C.frame, 11);
+      if (battle.typed >= pageLen() && (game.tick>>4)%2 === 0) text("▼", 240, 206, C.frame, 9);
+    }
+  }
+
+  // =======================================================================
+  //  描画: タイトル / オープニング(オリジナル16bit JRPG風)
+  // =======================================================================
+  function titleDither(x, y, w, h, c1, c2, step, phase) {
+    // 低解像度に見せるためではなく、SFC風に大面積の色面を分割する粒状パターン。
+    for (let yy = y; yy < y + h; yy += step) {
+      for (let xx = x + ((yy + phase) % (step * 2) === 0 ? 0 : step); xx < x + w; xx += step * 2) {
+        rect(xx, yy, 1, 1, ((xx + yy + phase) % 3) ? c1 : c2);
+      }
+    }
+  }
+
+  function titleSky() {
+    // 256x224の中に多段の暖色空を作る。実機風に線形グラデではなく帯で表現。
+    const bands = ["#321a40", "#5b2643", "#884038", "#b75d2e", "#dd7a32", "#f0a24b", "#f4c26a"];
+    for (let i = 0; i < bands.length; i++) rect(0, i * 18, VW, 18, bands[i]);
+    rect(0, 126, VW, 20, "#b95d31");
+    titleDither(0, 0, VW, 76, "#49214a", "#6b3142", 3, 1);
+    titleDither(0, 76, VW, 70, "#d07335", "#f0b15c", 4, 2);
+    // 夕日と雲
+    rect(184, 28, 34, 34, "#ffd27a"); rect(180, 34, 42, 22, "#ffd27a"); rect(188, 24, 26, 42, "#ffd27a");
+    rect(186, 31, 28, 2, "#fff0a8"); rect(184, 42, 34, 2, "#e58a43"); rect(180, 50, 42, 2, "#c76536");
+    rect(190, 59, 22, 2, "#b75d2e");
+    for (let i = 0; i < 7; i++) {
+      const x = 18 + i * 34 + ((game.tick >> 4) % 3);
+      const y = 30 + (i % 3) * 12;
+      rect(x, y, 18, 3, i % 2 ? "#f2b86a" : "#d97842");
+      rect(x + 6, y + 4, 24, 2, "#bb5c3f");
+      rect(x + 3, y - 2, 12, 1, "#ffd089");
+      rect(x + 12, y + 7, 10, 1, "#7d3b38");
+    }
+    // 霞の横線
+    for (let y = 86; y < 138; y += 9) rect((y * 5) % 32, y, 180, 1, "rgba(255,213,139,0.20)");
+    for (let y = 92; y < 138; y += 14) rect(96 + (y % 22), y + 3, 104, 1, "rgba(80,31,54,0.22)");
+  }
+
+  function titleMountains() {
+    // 遠景山脈
+    const baseFar = 150;
+    for (let x = 0; x < VW; x++) {
+      const h = Math.max(0, 34 - Math.abs(x - 55) * 0.45, 42 - Math.abs(x - 142) * 0.34, 28 - Math.abs(x - 222) * 0.5);
+      rect(x, baseFar - h, 1, h + 2, "#5b2a35");
+      if (x % 9 === 0) rect(x, baseFar - h + 7, 4, 1, "#7d3b38");
+      if (x % 17 === 0) rect(x, baseFar - h + 15, 3, 1, "#3e1c2d");
+    }
+    rect(0, 148, VW, 2, "#7d3b38");
+    // 中景山脈
+    const baseMid = 174;
+    for (let x = 0; x < VW; x++) {
+      const h = Math.max(0, 58 - Math.abs(x - 80) * 0.62, 44 - Math.abs(x - 18) * 0.8, 52 - Math.abs(x - 176) * 0.55);
+      rect(x, baseMid - h, 1, h + 4, "#34172a");
+      if (x % 12 === 0) rect(x, baseMid - h + 6, 5, 1, "#6b3337");
+      if (x % 7 === 0) rect(x, baseMid - h + 18, 3, 1, "#211026");
+      if (x % 23 === 0) rect(x, baseMid - h + 28, 6, 1, "#4a2230");
+    }
+    rect(0, 174, VW, 50, "#1b1025");
+    titleDither(0, 174, VW, 50, "#25142b", "#100818", 5, 3);
+  }
+
+  function titleCityLayer() {
+    // 遠景都市
+    for (let i = 0; i < 12; i++) {
+      const x = i * 22 - 8, h = 18 + (i * 13) % 34, w = 14 + (i % 3) * 4;
+      rect(x, 174 - h, w, h, "#221733");
+      rect(x, 174 - h, w, 1, "#3f2540");
+      rect(x + w - 2, 174 - h + 2, 2, h - 2, "#120b20");
+      if (i % 3 === 0) rect(x + 3, 174 - h - 5, 2, 5, "#3f2540");
+      for (let yy = 174 - h + 4; yy < 171; yy += 7) {
+        for (let xx = x + 3; xx < x + w - 2; xx += 6) {
+          const lit = ((i * 5 + xx + yy + (game.tick >> 5)) % 5) < 2;
+          rect(xx, yy, 2, 2, lit ? "#ffc86a" : "#120b20");
+          if (lit) rect(xx, yy + 2, 2, 1, "#8a4a2a");
+        }
+      }
+    }
+    // 前景の街灯と小さい看板
+    for (let i = 0; i < 5; i++) {
+      const x = 20 + i * 42;
+      rect(x, 164, 2, 12, "#0a0610");
+      rect(x - 2, 162, 6, 2, "#f8d36b");
+      rect(x - 1, 164, 4, 1, "#8a4a2a");
+    }
+    rect(0, 176, VW, 3, "#130a1c");
+  }
+
+  function titleDragon() {
+    // 左の巨大ドラゴン。黒ベタではなく暗紫/焦茶の階調で立体感を出す。
+    const k = "#140b18", d = "#241126", m = "#3a1b2e", hi = "#5b2a35", horn = "#b98b5c";
+    // 翼
+    rect(5, 77, 18, 8, d); rect(12, 84, 31, 6, d); rect(22, 90, 36, 9, d);
+    rect(2, 92, 28, 5, k); rect(30, 99, 38, 9, k); rect(49, 108, 18, 9, k);
+    rect(52, 83, 22, 5, m); rect(58, 89, 22, 5, m); rect(66, 95, 16, 5, m);
+    // 翼膜の筋と欠け
+    for (let i = 0; i < 5; i++) {
+      rect(13 + i * 9, 84 + i * 3, 2, 16 - i * 2, "#0a0610");
+      rect(18 + i * 8, 88 + i * 3, 5, 1, hi);
+    }
+    rect(4, 88, 5, 2, "#5b2a35"); rect(44, 101, 6, 2, "#3a1b2e");
+    // 背・首・頭
+    rect(28, 98, 54, 18, k); rect(36, 88, 48, 18, d); rect(46, 76, 38, 18, d);
+    rect(58, 66, 32, 16, d); rect(70, 58, 24, 15, k); rect(82, 62, 18, 10, k);
+    rect(92, 68, 11, 5, k); rect(96, 72, 7, 4, "#050309");
+    rect(63, 68, 18, 2, hi); rect(67, 73, 20, 1, m); rect(73, 60, 12, 1, hi);
+    rect(90, 70, 8, 1, "#3a1b2e"); rect(96, 73, 6, 1, "#241126");
+    // ツノ・牙・目
+    rect(70, 52, 3, 9, horn); rect(74, 48, 3, 13, horn); rect(84, 52, 4, 9, horn);
+    rect(70, 52, 1, 8, "#e6d6a6"); rect(75, 49, 1, 11, "#e6d6a6"); rect(84, 52, 1, 8, "#e6d6a6");
+    rect(94, 76, 3, 5, "#e6d6a6"); rect(88, 77, 2, 4, "#e6d6a6");
+    rect(84, 65, 5, 2, "#ffcf4a"); rect(88, 66, 2, 1, "#fff7c2");
+    // 腹・腕・爪
+    rect(40, 116, 46, 24, k); rect(30, 128, 56, 18, k); rect(24, 146, 54, 20, k);
+    rect(82, 112, 22, 8, d); rect(92, 120, 16, 7, k); rect(106, 126, 8, 3, "#d9c9a3");
+    rect(48, 160, 28, 12, k); rect(66, 170, 22, 8, "#0a0610");
+    // 体表のハイライト/鱗
+    for (let i = 0; i < 34; i++) {
+      const x = 38 + (i % 6) * 8, y = 94 + ((i / 6) | 0) * 13;
+      rect(x, y, 4, 1, i % 2 ? hi : m);
+      if (i % 3 === 0) rect(x + 2, y + 2, 2, 1, "#0a0610");
+    }
+    // 1px単位の鱗ディテール。大きな黒面を避けるため密度を足す。
+    for (let i = 0; i < 46; i++) {
+      const sx = 30 + ((i * 7) % 58);
+      const sy = 91 + ((i * 11) % 72);
+      const inBody = (sx > 34 && sx < 87 && sy > 92 && sy < 164);
+      if (inBody) {
+        rect(sx, sy, 1, 1, i % 2 ? "#5b2a35" : "#241126");
+        if (i % 5 === 0) rect(sx + 1, sy, 1, 1, "#0a0610");
+      }
+    }
+    for (let i = 0; i < 12; i++) {
+      const sx = 52 + i * 3;
+      rect(sx, 82 + (i % 4), 1, 1, "#6b3337");
+      rect(sx + 1, 83 + (i % 4), 1, 1, "#140b18");
+    }
+    rect(55, 116, 2, 28, hi); rect(62, 116, 2, 26, m); rect(69, 118, 2, 22, hi);
+    for (let i = 0; i < 6; i++) rect(43 + i * 6, 125 + i % 2 * 5, 3, 1, "#5b2a35");
+    // 尾
+    rect(5, 153, 36, 8, k); rect(0, 160, 25, 6, "#0a0610"); rect(20, 145, 22, 5, d);
+    rect(12, 155, 22, 1, hi); rect(3, 162, 14, 1, "#241126");
+  }
+
+  function titleBuilding() {
+    // 右のビル。単なる箱にしないため、側面・屋上縁・窓色差・アンテナを持たせる。
+    const x = 184, y = 96, w = 64, h = 108;
+    rect(x, y, w, h, "#21162b");
+    rect(x + 8, y + 8, w - 8, h - 8, "#2f1d34");
+    rect(x, y, 8, h, "#130b1a");
+    rect(x, y, w, 4, "#5b3440");
+    titleDither(x + 10, y + 10, w - 12, h - 14, "#39213a", "#24162b", 4, 4);
+    titleDither(x + 10, y + 10, w - 12, h - 14, "#4a2a42", "#1a1020", 3, 2);
+    for (let yy = y + 12; yy < y + h - 10; yy += 12) {
+      rect(x + 8, yy, w - 8, 1, "#21162b");
+      rect(x + 8, yy + 1, w - 8, 1, "#3a2238");
+    }
+    for (let xx = x + 18; xx < x + w - 4; xx += 11) rect(xx, y + 8, 1, h - 12, "#1a1020");
+    rect(x - 4, y - 4, w + 10, 8, "#3a2230");
+    rect(x + 2, y - 8, 16, 4, "#4b2b39"); rect(x + 46, y - 8, 12, 4, "#4b2b39");
+    rect(x + 52, y - 24, 2, 20, "#513343"); rect(x + 50, y - 24, 6, 2, "#bb6b45");
+    // 窓
+    for (let row = 0; row < 6; row++) {
+      for (let col = 0; col < 4; col++) {
+        const wx = x + 14 + col * 11, wy = y + 18 + row * 13;
+        const lit = (row * 3 + col + (game.tick >> 5)) % 4;
+        const c = lit === 0 ? "#ffd36a" : lit === 1 ? "#ff9f50" : lit === 2 ? "#6b4a54" : "#161022";
+        rect(wx, wy, 6, 7, c);
+        rect(wx, wy, 6, 1, lit < 2 ? "#fff0a8" : "#2a1c2e");
+        rect(wx + 5, wy, 1, 7, "#0a0610");
+        if (lit < 2) rect(wx + 1, wy + 5, 3, 1, "#8a4a2a");
+        if (lit < 2 && (row + col) % 2 === 0) rect(wx + 1, wy + 1, 1, 1, "#fff7c2");
+      }
+    }
+    // 窓以外の壁面に微細な汚れ/反射を入れて単色面を減らす。
+    for (let i = 0; i < 38; i++) {
+      const px = x + 10 + ((i * 13) % 48);
+      const py = y + 12 + ((i * 17) % 84);
+      rect(px, py, 1, 1, i % 2 ? "#4a2a42" : "#181020");
+    }
+    // 屋上ステージ
+    rect(x - 8, y - 2, w + 18, 6, "#1a1020");
+    rect(x - 8, y - 6, w + 18, 3, "#6b3d3e");
+    rect(x - 2, y - 10, 40, 4, "#9a573e");
+    rect(x + 2, y - 14, 5, 8, "#2a1929"); rect(x + 42, y - 14, 5, 8, "#2a1929");
+    rect(x + 8, y - 17, 28, 2, "#d18458"); rect(x + 12, y - 20, 14, 2, "#f0b15c");
+    // 屋上の床タイルとフェンス
+    for (let i = 0; i < 8; i++) {
+      rect(x - 4 + i * 9, y - 5, 1, 4, "#d18458");
+      rect(x - 2 + i * 9, y - 1, 5, 1, "#6b3d3e");
+    }
+  }
+
+  function titleHero(x, y, coat, hair) {
+    const art = coat === "blue" ? TITLE_HERO_BLUE : TITLE_HERO_GIRL;
+    drawArt(art, x, y, TP, 1);
+    // 微細な反射だけを追加。大きな矩形は使わない。
+    if ((game.tick >> 4) % 2 === 0) rect(x + 7, y + 15, 1, 1, "#fff0a8");
+  }
+
+  function titleHeroes() {
+    const bob = (game.tick >> 4) % 2;
+    // 風になびく短いマント/スカーフ
+    titleHero(198, 62 + bob, "blue");
+    titleHero(224, 62 + (1 - bob), "girl");
+    // 足元の屋上影
+    rect(196, 95, 20, 2, "rgba(0,0,0,0.35)");
+    rect(222, 95, 20, 2, "rgba(0,0,0,0.35)");
+  }
+
+  function titleLogoLine(str, x, y, size, fill) {
+    ctx.textBaseline = "top";
+    ctx.font = "bold " + size + "px 'MS Gothic','Yu Gothic','Courier New',monospace";
+    // 影、濃色縁、明色縁、内側ハイライト
+    ctx.fillStyle = "#1a0b16"; ctx.fillText(str, x + 3, y + 4);
+    ctx.fillStyle = "#2a1306";
+    ctx.fillText(str, x - 2, y); ctx.fillText(str, x + 2, y); ctx.fillText(str, x, y - 2); ctx.fillText(str, x, y + 2);
+    ctx.fillStyle = "#fff0a8";
+    ctx.fillText(str, x - 1, y - 1); ctx.fillText(str, x + 1, y - 1);
+    ctx.fillStyle = fill; ctx.fillText(str, x, y);
+    // 文字内のドット状ハイライトを横線で少しだけ入れる
+    ctx.fillStyle = "rgba(255,255,255,0.22)";
+    ctx.fillRect(x + 4, y + 5, Math.max(16, str.length * size * 0.42), 1);
+  }
+
+  function drawTitleLogo() {
+    titleLogoLine("デットシンジケート", 18, 13, 18, "#f6b35a");
+    titleLogoLine("百億円を完売せよ", 46, 39, 16, "#f8d36b");
+    // ロゴ装飾の金属プレート
+    rect(52, 63, 152, 2, "#1a0b16");
+    rect(56, 66, 144, 2, "#2a1306"); rect(62, 68, 132, 1, "#fff0a8"); rect(72, 70, 112, 1, "#8a4a2a");
+    rect(50, 65, 6, 6, "#f8d36b"); rect(200, 65, 6, 6, "#f8d36b");
+    rect(52, 67, 2, 2, "#2a1306"); rect(202, 67, 2, 2, "#2a1306");
+    text("- THE PRIMARY MARKET -", 62, 74, "#3d220f", 9);
+    text("- THE PRIMARY MARKET -", 61, 73, "#fff0a8", 9);
+  }
+
+  function drawTitle() {
+    rect(0, 0, VW, VH, C.black);
+    titleSky();
+    titleMountains();
+    titleCityLayer();
+    titleDragon();
+    titleBuilding();
+    titleHeroes();
+    drawTitleLogo();
+
+    // PRESS START(点滅)
+    if ((game.tick >> 4) % 2 === 0) {
+      rect(52, 178, 152, 14, "rgba(20,11,24,0.55)");
+      rect(54, 179, 148, 1, "rgba(255,240,168,0.35)");
+      text(IS_TOUCH ? "Ｔ Ａ Ｐ　Ｓ Ｔ Ａ Ｒ Ｔ" : "Ｐ Ｒ Ｅ Ｓ Ｓ　Ｓ Ｔ Ａ Ｒ Ｔ", IS_TOUCH ? 64 : 48, 180, "#fff0a8", 11);
+    }
+    text("(c) SYNDICATE BANK  2026", 64, 204, "#c78958", 9);
+  }
+
+  // ------- オープニング部品 -------
+  function opCaption(l0, l1) {
+    drawWindow(4, 196, 248, 26);
+    text(l0, 12, 200, C.frame, 10);
+    if (l1) text(l1, 12, 210, C.gray, 9);
+  }
+  // スクロールするビル群(パララックス)
+  function skyline(baseY, h0, h1, col, winCol, off, bw, gap) {
+    const period = bw + gap;
+    let start = -((off % period + period) % period);
+    for (let x = start; x < VW; x += period) {
+      const idx = Math.floor((x + off) / period);
+      const h = h0 + (Math.abs(idx * 53) % (h1 - h0));
+      rect(x, baseY - h, bw, h, col);
+      for (let wy = baseY - h + 3; wy < baseY - 3; wy += 6) {
+        for (let wx = x + 2; wx < x + bw - 2; wx += 5) {
+          const lit = ((idx * 7 + wy + wx + (game.tick >> 4)) % 5) < 2;
+          rect(wx, wy, 2, 3, lit ? winCol : "#0c1230");
+        }
+      }
+    }
+  }
+
+  // Scene1: 王国の夜景(パララックススクロール)
+  function opCity(e) {
+    rect(0, 0, VW, 92, "#0e1738");
+    rect(0, 92, VW, 38, "#1b2750");
+    rect(0, 130, VW, VH - 130, "#0a1026");
+    // 月
+    rect(34, 18, 20, 20, "#e8e6c8"); rect(38, 20, 16, 16, "#0e1738"); rect(40, 22, 14, 14, "#0e1738");
+    // 星
+    for (let i = 0; i < 30; i++) {
+      const sx = (i * 47) % VW, sy = (i * 29) % 86;
+      if ((i + (game.tick >> 5)) % 4 !== 0) rect(sx, sy, 1, 1, i % 2 ? C.frame : C.gray);
+    }
+    skyline(132, 26, 60, "#1a2350", "#9fd0ff", e * 9, 22, 10);   // 遠景(遅い)
+    skyline(150, 40, 86, "#0f1838", "#facc15", e * 26, 30, 8);   // 近景(速い)
+    opCaption("シンジケート王国の よる――", "市場に きな臭い かぜが ふく。");
+  }
+
+  // Scene2: 荒れる金利市場(チャートが伸びる)
+  function opMarket(e) {
+    rect(0, 0, VW, VH, "#0a0f1f");
+    for (let gy = 20; gy < 150; gy += 16) rect(0, gy, VW, 1, "#152038");
+    for (let gx = 0; gx < VW; gx += 24) rect(gx, 20, 1, 130, "#152038");
+    text("YIELD", 12, 8, C.gray, 8);
+    // ローソク足
+    const n = Math.min(11, 1 + Math.floor(e * 6));
+    let prev = 120;
+    for (let i = 0; i < n; i++) {
+      const x = 18 + i * 20;
+      const o = prev;
+      const c = 120 - i * 8 - ((i * 37) % 12);   // 利回り上昇=価格下落イメージ
+      prev = c;
+      const up = c < o;
+      const col = up ? "#22c55e" : "#ef4444";
+      rect(x + 4, Math.min(o, c), 4, Math.max(2, Math.abs(c - o)), col);
+      rect(x + 5, Math.min(o, c) - 4, 2, 4, col);
+      rect(x + 5, Math.max(o, c), 2, 4, col);
+    }
+    const tipx = 18 + (n - 1) * 20 + 5;
+    if ((game.tick >> 2) % 2 === 0) { rect(tipx - 3, prev - 3, 8, 8, "#ef4444"); }
+    text("▲ ワイドニング 圧力", 130, 8, "#ef4444", 8);
+    opCaption("しじょうの かぜが あれる。", "スプレッドが ひらきはじめた。");
+  }
+
+  // 簡易な城(矩形で構成)
+  function drawCastleRect(x, y) {
+    rect(x, y + 18, 64, 40, "#6b7280");           // 本体
+    rect(x, y + 18, 64, 3, "#9ca3af");
+    for (let i = 0; i < 4; i++) rect(x + i * 18, y + 10, 12, 12, "#6b7280"); // 塔
+    for (let i = 0; i < 8; i++) rect(x + i * 8, y + 6, 5, 5, "#4b5563");     // 胸壁
+    rect(x + 26, y + 38, 12, 20, "#1f2937");      // 門
+    rect(x + 14, y + 26, 6, 6, "#facc15"); rect(x + 44, y + 26, 6, 6, "#facc15"); // 窓
+  }
+
+  // Scene3: 発行体の城から伝令
+  function opCastle(e) {
+    rect(0, 0, VW, 88, "#e0863a");
+    rect(0, 88, VW, 30, "#c96a24");
+    rect(0, 118, VW, VH - 118, "#2e7d32");        // 草地
+    rect(0, 118, VW, 3, "#3da348");
+    drawCastleRect(176, 40);
+    // 伝令(右→左へ走る)
+    const rx = 230 - e * 78;
+    const bob = (Math.floor(e * 10) % 2);
+    drawArt(SPR_HERO, rx, 96 + bob, P, 1);
+    rect(rx - 8, 104, 8, 6, "#f4f5f7"); rect(rx - 6, 106, 5, 1, "#ef4444"); // 手紙
+    opCaption("発行体の城より きゅうし。", "「100億円、なるべく タイトで」");
+  }
+
+  // 回転する光芒
+  function sunRays(cx, cy, e) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(e * 0.6);
+    for (let i = 0; i < 12; i++) {
+      ctx.rotate(Math.PI / 6);
+      ctx.fillStyle = i % 2 ? "#ffe9b0" : "#fbd987";
+      ctx.fillRect(0, -3, 200, 6);
+    }
+    ctx.restore();
+  }
+
+  // Scene4: 主幹事の勇者、立つ
+  function opHero(e) {
+    rect(0, 0, VW, VH, "#f6b35a");
+    sunRays(128, 70, e);
+    rect(0, 150, VW, VH - 150, "#2e7d32");
+    rect(0, 150, VW, 3, "#3da348");
+    const bob = (Math.floor(e * 6) % 2);
+    drawShadow(128, 150, 60);
+    drawArt(SPR_HERO, 128 - 30, 58 + bob, P, 3);   // 大きく
+    // きらめき
+    for (let i = 0; i < 4; i++) {
+      if (((game.tick >> 3) + i) % 4 === 0) rect(80 + i * 30, 50 + (i % 2) * 10, 3, 3, C.frame);
+    }
+    opCaption("主幹事の勇者、いざ ゆく。", "100億円の 起債が はじまる。");
+  }
+
+  // Scene5: タイトルロゴ スラム
+  function opLogo(e) {
+    rect(0, 0, VW, VH, "#101a3a");
+    if (e < 0.25) { ctx.fillStyle = "rgba(248,248,248," + (1 - e / 0.25) + ")"; ctx.fillRect(0, 0, VW, VH); }
+    for (let i = 0; i < 40; i++) {
+      const sx = (i * 53) % VW, sy = (i * 31) % VH;
+      if ((i + (game.tick >> 4)) % 3 !== 0) rect(sx, sy, 1, 1, i % 2 ? C.frame : C.gray);
+    }
+    const drop = Math.max(0, 40 - e * 120);        // 上から落ちて止まる
+    titleLogoLine("デットシンジケート", 18, 70 - drop, 18, "#f6b35a");
+    titleLogoLine("クエスト", 82, 95 - drop, 22, "#f8d36b");
+    text("- 起債の勇者 -", 84, 125, C.gray, 10);
+    if ((game.tick >> 4) % 2 === 0) text("ゆけ、起債の 勇者よ！", 70, 160, C.frame, 10);
+  }
+
+  // ------- 追加オープニング部品(SFC風・精細化) -------
+  // フェード用の黒幕(シーン開始/終了)
+  function sceneFade(e, dur) {
+    const fin = Math.min(1, e / 0.4);
+    const fout = Math.min(1, Math.max(0, (dur - e) / 0.4));
+    const a = 1 - Math.min(fin, fout);
+    if (a > 0.01) { ctx.fillStyle = "rgba(0,0,0," + a + ")"; ctx.fillRect(0, 0, VW, VH); }
+  }
+  // 帯グラデ風の夜空(フラット多段)
+  function nightBands(top) {
+    const cols = ["#0a0e26", "#0e1430", "#141d44", "#1b2858", "#28386f"];
+    for (let i = 0; i < cols.length; i++) rect(0, top + i * 14, VW, 15, cols[i]);
+  }
+  function twinkle(maxY, n) {
+    for (let i = 0; i < n; i++) {
+      const sx = (i * 53 + 7) % VW, sy = (i * 37) % maxY;
+      if ((i + (game.tick >> 5)) % 4 !== 0) rect(sx, sy, 1, 1, i % 3 ? C.frame : "#9fd0ff");
+    }
+  }
+  function bigMoon(cx, cy, r) {
+    rect(cx - r, cy - r, r * 2, r * 2, "#0a0e26");
+    rect(cx - r + 2, cy - r, r * 2 - 4, r * 2, "#f4efcf");
+    rect(cx - r, cy - r + 2, r * 2, r * 2 - 4, "#f4efcf");
+    rect(cx - r + 3, cy - 2, 4, 4, "#ddd6a6");      // クレーター
+    rect(cx + 1, cy + 3, 3, 3, "#ddd6a6");
+    rect(cx - 1, cy - r + 4, 3, 3, "#ddd6a6");
+  }
+  // 精細な城
+  function drawCastle2(x, y, s) {
+    const W = 11 * s;
+    rect(x, y + 5 * s, W, 9 * s, "#3b4168");
+    rect(x, y + 5 * s, W, s, "#525a8a");
+    rect(x, y + 13 * s, W, s, "#2a2f50");
+    // 胸壁
+    for (let i = 0; i < 6; i++) rect(x + i * 2 * s, y + 4 * s, s, s, "#2a2f50");
+    // 塔(両脇＋中央)
+    const tw = [-1 * s, 5 * s, W - s + s];
+    for (let t = 0; t < 3; t++) {
+      const tx = x + (t === 0 ? -s : t === 1 ? 5 * s : W - s);
+      rect(tx, y + 1 * s, 2 * s, 13 * s, "#454c78");
+      rect(tx, y, 2 * s, s, "#2a2f50");
+      rect(tx - s * 0.5, y - 2 * s, 3 * s, s, "#3b4168");
+      // 屋根の旗
+      rect(tx + s, y - 4 * s, s, 2 * s, "#7a8298");
+      const wav = (game.tick >> 3) % 2;
+      rect(tx + s * 2, y - 4 * s + wav, 3 * s, 2 * s, "#ef4444");
+    }
+    // 窓(ちらつき)
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) {
+      const lit = ((r * 7 + c * 3 + (game.tick >> 4)) % 5) < 3;
+      rect(x + 2 * s + c * 2 * s, y + 6 * s + r * 2 * s, s, s, lit ? "#ffd24a" : "#1c2142");
+    }
+    // 門
+    rect(x + W / 2 - s, y + 10 * s, 2 * s, 4 * s, "#171a30");
+    rect(x + W / 2 - s, y + 10 * s, 2 * s, s, "#ffd24a");
+  }
+
+  // Scene: 月夜のシ団城
+  function opCastleNight(e) {
+    nightBands(0);
+    twinkle(70, 36);
+    bigMoon(206, 30, 16);
+    // 遠景の山並み
+    for (let i = 0; i < 8; i++) { const mx = i * 36 - 8; rect(mx, 92 - (i % 3) * 6, 40, 40, "#10162e"); }
+    // 城(中央, ゆっくりズームイン)
+    const s = 4 + Math.min(2, e * 0.9);
+    drawCastle2(128 - 5.5 * s, 70 - 6 * s, s);
+    // 水面リフレクション
+    rect(0, 150, VW, VH - 150, "#0c1330");
+    for (let i = 0; i < VW; i += 6) {
+      if (((i >> 1) + (game.tick >> 3)) % 3 === 0) rect(i, 152 + (i % 3), 4, 1, "#26345f");
+    }
+    opCaption("発行体は シ団城に つげた――", "「100億円の 起債を せよ」");
+    sceneFade(e, 2.4);
+  }
+
+  // 大きいCFOドラゴン(SPR_CFOを使用)＋発光する目
+  function opCFO(e) {
+    // 重役室
+    rect(0, 0, VW, VH, "#241a12");
+    rect(0, 0, VW, 14, "#160f0a");
+    for (let i = 0; i < VW; i += 16) rect(i, 14, 1, 116, "#1c130c");   // 木目壁
+    // 夜景の窓
+    rect(150, 22, 92, 64, "#0c1230");
+    rect(150, 22, 92, 64, "#0c1230");
+    skyline(86, 16, 40, "#13204a", "#9fd0ff", e * 8, 16, 8);
+    rect(148, 20, 96, 2, "#3a2c1c"); rect(148, 84, 96, 2, "#3a2c1c");
+    rect(196, 22, 2, 64, "#3a2c1c");
+    // 机
+    rect(0, 120, VW, 22, "#3a2616"); rect(0, 120, VW, 3, "#5a3a22");
+    // 100億の書類＋ロウソク
+    rect(28, 112, 22, 12, "#efe7cf"); text("100億", 30, 114, "#1f2937", 7);
+    const fl = (game.tick >> 2) % 2;
+    rect(66, 104, 3, 8, "#caa15a"); rect(65, 99 - fl, 5, 6, "#ffcf5a"); rect(66, 96 - fl, 3, 4, "#ff7a1a");
+    // ドラゴン(右に座す, 軽く上下)
+    const bob = (Math.floor(e * 4) % 2);
+    drawShadow(168, 122, 56);
+    drawArt(SPR_CFO, 138, 36 + bob, P, 3);
+    // 目を光らせる
+    if ((game.tick >> 2) % 2 === 0) { rect(170, 58, 5, 4, "#ff3030"); rect(190, 58, 5, 4, "#ff3030"); }
+    opCaption("強気CFO ドラゴンが まちうける。", "「タイトに 決めねば 通さんぞ」");
+    sceneFade(e, 2.4);
+  }
+
+  // 投資家シルエット(頭＋肩)
+  function investor(x, y, col) { rect(x + 2, y, 6, 6, col); rect(x, y + 6, 10, 8, col); }
+  // Scene: ロードショー(投資家を回りオーダー収集)
+  function opInvestors(e) {
+    rect(0, 0, VW, 96, "#1a2548");
+    rect(0, 96, VW, VH - 96, "#0f1730");
+    rect(0, 96, VW, 2, "#26345f");
+    // 後列の投資家たち
+    for (let i = 0; i < 7; i++) {
+      const sway = Math.sin((game.tick / 8) + i) * 1.2;
+      investor(18 + i * 32, 70 + sway, i % 2 ? "#2a3a6a" : "#33457a");
+    }
+    // 吹き出し(順に出るオーダー)
+    const bids = ["30", "20", "検討", "15", "40"];
+    const shown2 = Math.min(bids.length, 1 + Math.floor(e * 2.2));
+    for (let i = 0; i < shown2; i++) {
+      const bx = 24 + i * 46, by = 44;
+      rect(bx, by, 26, 13, "#f4f5f7"); rect(bx + 4, by + 13, 4, 3, "#f4f5f7");
+      text(bids[i] + (isNaN(+bids[i]) ? "" : "億"), bx + 2, by + 3, "#1f2937", 7);
+    }
+    // 勇者(左で説明)
+    const bob = (Math.floor(e * 6) % 2);
+    drawShadow(30, 120, 26);
+    drawArt(SPR_HERO, 14, 96 + bob, P, 2);
+    opCaption("投資家を まわり オーダーを あつめる。", "需要を つみあげ、起債を 成立させよ。");
+    sceneFade(e, 2.2);
+  }
+
+  // Scene: なかま集結
+  function opAllies(e) {
+    rect(0, 0, VW, 150, "#f3a64e");
+    rect(0, 60, VW, 30, "#f6b863");
+    rect(0, 150, VW, VH - 150, "#2e7d32"); rect(0, 150, VW, 3, "#3da348");
+    sunRays(128, 60, e * 0.4);
+    const march = (Math.floor(e * 8) % 2);
+    drawShadow(70, 150, 22); drawShadow(110, 150, 22); drawShadow(150, 150, 22); drawShadow(190, 150, 22);
+    drawArt(SPR_HERO, 60, 120 + march, P, 2);
+    drawArt(CH_BLUE, 104, 120 + ((march + 1) % 2), TP, 2);
+    drawArt(CH_GIRL, 144, 120 + march, TP, 2);
+    drawArt(CH_BLUE, 184, 120 + ((march + 1) % 2), TP, 2);
+    opCaption("シ団の なかまが あつまった！", "セールス、ドキュメンテーション、審査――");
+    sceneFade(e, 2.2);
+  }
+
+  function drawOpening() {
+    const e = (game.now - op.start) / 1000;
+    rect(0, 0, VW, VH, C.black);
+    if (e < 2.4) opCity(e);
+    else if (e < 4.8) opCastleNight(e - 2.4);
+    else if (e < 7.0) opMarket(e - 4.8);
+    else if (e < 9.2) opCastle(e - 7.0);
+    else if (e < 11.6) opCFO(e - 9.2);
+    else if (e < 13.8) opInvestors(e - 11.6);
+    else if (e < 16.0) opHero(e - 13.8);
+    else if (e < 18.2) opAllies(e - 16.0);
+    else opLogo(e - 18.2);
+    if ((game.tick >> 4) % 2 === 0) text("ENTER:SKIP", 188, 186, C.gray, 8);
+  }
+
+  // =======================================================================
+  //  エンディング(起債成立, 約10秒)
+  // =======================================================================
+  function startEnding(result) {
+    ending.start = performance.now();
+    ending.result = result || "win";
+    const sp = game.stats.spread;
+    ending.grade = sp <= 110 ? "S  会心の起債！タイトに決めた"
+                 : sp <= 125 ? "A  手堅い 完売"
+                 :             "B  ワイドだが 完売は 完売";
+    ending.spread = sp; ending.turns = battle.turn; ending.book = battle.book;
+    game.mode = "ending";
+  }
+
+  function edConfetti(n) {
+    const cols = ["#facc15", "#ef4444", "#22c55e", "#60a5fa", "#f8f8f8"];
+    for (let i = 0; i < n; i++) {
+      const sx = (i * 41 + (game.tick * 2)) % VW;
+      const sy = ((i * 53) + (game.tick * 3)) % (VH + 20) - 10;
+      rect(sx, sy, 2, 3, cols[i % cols.length]);
+    }
+  }
+  function cheerCrowd(y) {
+    for (let i = 0; i < 9; i++) {
+      const bob = Math.floor((game.tick / 4) + i) % 2;
+      investor(10 + i * 28, y - bob * 2, i % 2 ? "#1f2a4f" : "#283561");
+      if (bob) { rect(10 + i * 28 - 2, y - 4, 2, 5, "#283561"); rect(10 + i * 28 + 10, y - 4, 2, 5, "#283561"); }
+    }
+  }
+
+  // 勝利エンディング(起債成立)
+  function drawEndingWin(e) {
+    if (e < 3.6) {
+      // 完売御礼
+      rect(0, 0, VW, 96, "#f6b35a"); rect(0, 96, VW, 30, "#e2913c");
+      rect(0, 126, VW, VH - 126, "#1a2548");
+      sunRays(128, 50, e * 0.5);
+      cheerCrowd(150);
+      edConfetti(60);
+      drawWindow(40, 70, 176, 30);
+      text("完売 御礼！", 92, 78, "#facc15", 13);
+    } else if (e < 7.0) {
+      // 起債 成立(光の柱＋証書が昇る)
+      nightBands(0); twinkle(80, 40);
+      const t = e - 3.6;
+      ctx.fillStyle = "rgba(255,236,176,0.20)";
+      ctx.fillRect(112, 0, 32, VH);
+      const cy = 150 - t * 34;
+      rect(108, cy, 40, 26, "#efe7cf"); rect(108, cy, 40, 3, "#caa15a");
+      text("起債", 118, cy + 5, "#1f2937", 9); text("成立", 118, cy + 15, "#1f2937", 9);
+      for (let i = 0; i < 6; i++) if (((game.tick >> 2) + i) % 4 === 0) rect(90 + i * 14, 40 + (i % 3) * 16, 3, 3, "#fff7d8");
+      edConfetti(30);
+      drawWindow(36, 168, 184, 24);
+      text("100億円の 起債が 成立した！", 46, 174, C.frame, 9);
+    } else {
+      // リザルト(スタッフロール風)
+      rect(0, 0, VW, VH, "#0a0e26"); twinkle(VH, 50);
+      text("― 起債 成立 ―", 76, 24, "#facc15", 11);
+      text("完売額", 60, 60, C.gray, 9); text(ending.book + " 億円", 150, 60, C.frame, 9);
+      text("スプレッド", 60, 76, C.gray, 9); text(ending.spread + " bp", 150, 76, C.frame, 9);
+      text("所要ターン", 60, 92, C.gray, 9); text(ending.turns + " ターン", 150, 92, C.frame, 9);
+      text("評価", 60, 108, C.gray, 9); text(ending.grade, 100, 108, "#22c55e", 9);
+      text("主幹事の勇者  ……  あなた", 52, 138, C.gray, 8);
+      if ((game.tick >> 4) % 2 === 0) text("F I N", 110, 168, C.frame, 12);
+    }
+  }
+
+  // 敗北エンディング(起債見送り)
+  function drawEndingLose(e) {
+    if (e < 3.6) {
+      // 暗転した会議室で CFO が背を向ける
+      rect(0, 0, VW, VH, "#161320");
+      rect(0, 0, VW, 14, "#0e0b16");
+      for (let i = 0; i < VW; i += 16) rect(i, 14, 1, 116, "#1b1626");
+      rect(0, 120, VW, 22, "#241a2a"); rect(0, 120, VW, 3, "#352636");
+      // 雨だれ(窓)
+      rect(150, 22, 92, 64, "#0a0c18");
+      for (let i = 0; i < 24; i++) { const rx = 152 + (i * 7) % 88; const ry = (i * 23 + game.tick * 4) % 64; rect(rx, 22 + ry, 1, 4, "#2a3450"); }
+      const sh = (game.tick >> 3) % 2;
+      drawShadow(168, 122, 56);
+      drawArt(SPR_CFO, 138 + sh, 40, P, 3, "#5a4a6a");   // 暗いシルエット
+      if ((game.tick >> 3) % 2 === 0) { rect(170, 58, 5, 4, "#ff3030"); rect(190, 58, 5, 4, "#ff3030"); }
+      drawWindow(20, 66, 150, 24);
+      text("「この条件では 通せん」", 28, 73, C.red, 9);
+    } else if (e < 7.0) {
+      // 夕日に沈む城を、勇者が去る
+      rect(0, 0, VW, 70, "#3a2a52"); rect(0, 70, VW, 30, "#6b3f4a"); rect(0, 100, VW, 24, "#9a5a3a");
+      const sunY = 96 + (e - 3.6) * 6;
+      rect(120, sunY - 14, 28, 28, "#e06a3a"); rect(116, sunY - 10, 36, 20, "#e06a3a"); rect(120, sunY - 18, 28, 36, "#e06a3a");
+      rect(0, 124, VW, VH - 124, "#241a2a"); rect(0, 124, VW, 3, "#352636");
+      // 遠景の城(シルエット)
+      drawCastle2(176, 86, 3);
+      // 勇者が左へ去る(うつむき)
+      const wx = 150 - (e - 3.6) * 30;
+      const march = (Math.floor(e * 6) % 2);
+      drawShadow(wx + 10, 124, 22);
+      drawArt(SPR_HERO, wx, 100 + march, P, 2, "#3a3550");
+      drawWindow(20, 168, 200, 24);
+      text("市場の かぜは まだ やまない……", 28, 174, C.gray, 9);
+    } else {
+      // リザルト(敗北)
+      rect(0, 0, VW, VH, "#120e1c"); twinkle(VH, 36);
+      text("― 起債 見送り ―", 72, 24, C.red, 11);
+      const why = ending.reason === "time" ? "条件決定の機を のがした" : "気力が つきはてた";
+      text("事由", 60, 60, C.gray, 9); text(why, 100, 60, C.frame, 9);
+      text("集めたオーダー", 50, 80, C.gray, 9); text(ending.book + " / " + SIZE + " 億円", 150, 80, C.frame, 9);
+      text("所要ターン", 60, 100, C.gray, 9); text(ending.turns + " ターン", 150, 100, C.frame, 9);
+      text("だが 勇者の挑戦は おわらない。", 44, 138, C.gray, 8);
+      if ((game.tick >> 4) % 2 === 0) text("T O   B E   C O N T I N U E D", 50, 168, C.frame, 9);
+    }
+  }
+
+  function drawEnding() {
+    const e = (game.now - ending.start) / 1000;
+    rect(0, 0, VW, VH, C.black);
+    if (ending.result === "lose") drawEndingLose(e);
+    else drawEndingWin(e);
+    // 演出が一巡したら停止し、入力でタイトルへ(勝手に進まない)
+    if (e >= 7.0) {
+      text("ENTER で タイトルへ", 70, 196, C.gray, 8);
+    } else if ((game.tick >> 4) % 2 === 0) {
+      text("ENTER:SKIP", 188, 186, C.gray, 8);
+    }
+  }
+
+  // =======================================================================
+  //  メイン描画
+  // =======================================================================
+  function drawBattleScreen() {
+    rect(0, 0, VW, VH, C.black);
+    drawStage();
+    drawCharacters();
+    drawDeskFront();
+    drawEffects();
+    drawDealHeader();
+    drawUI();
+  }
+
+  function draw() {
+    if (game.mode === "title") drawTitle();
+    else if (game.mode === "opening") drawOpening();
+    else if (game.mode === "ending") drawEnding();
+    else drawBattleScreen();
+  }
+
+  // =======================================================================
+  //  更新
+  // =======================================================================
+  function update() {
+    game.tick++;
+    game.now = performance.now();
+
+    if (game.mode === "opening") {
+      if (game.now - op.start >= OP_DUR) finishOpening();
+      return;
+    }
+    if (game.mode === "ending") {
+      // 自動では進めない。最後の画面で停止し、ENTER/クリックでタイトルへ。
+      return;
+    }
+    if (game.mode === "title") return;
+
+    // ゲージのなめらか減少
+    if (battle.shown < battle.book) battle.shown = Math.min(battle.book, battle.shown + 1.8);
+    else if (battle.shown > battle.book) battle.shown = battle.book;
+    if (battle.shownRemaining > battle.remaining) battle.shownRemaining = Math.max(battle.remaining, battle.shownRemaining - 1.8);
+    else if (battle.shownRemaining < battle.remaining) battle.shownRemaining = battle.remaining;
+
+    // 各種演出タイマー
+    if (battle.screenShake > 0) battle.screenShake--;
+    if (battle.dealFlash > 0) battle.dealFlash--;
+    if (battle.ticketT > 0) battle.ticketT--;
+
+    // タイプライター送り
+    if (["intro","result","win","lose"].includes(battle.phase)) {
+      if (battle.typed < pageLen() && game.tick % 2 === 0) battle.typed++;
+    }
+
+    // ディール成立アニメ(電話 → 端末入力 → チケットがブックへ)
+    if (battle.phase === "dealAnim") {
+      battle.animT++;
+      const t = battle.animT;
+      if (t === 10 && !battle.animHit) {
+        battle.animHit = true;
+        const amount = battle.pending.amount;
+        battle.book = Math.min(SIZE, battle.book + amount);
+        battle.remaining = Math.max(0, SIZE - battle.book);
+        if (amount > 0) {
+          const investors = ["MEIJI AM", "KANTO BK", "SAKURA LIFE", "NORTH FUND", "CENTRAL AM"];
+          battle.ticketName = investors[(battle.turn + amount) % investors.length];
+          battle.ticketAmount = amount;
+          battle.ticketT = 50;
+          if (amount >= 15) { battle.dealFlash = 4; battle.screenShake = 4; }
+        }
+      }
+      if (t >= 34) {
+        battle.phase = "result";
+        setPages(battle.pending.pages, function () {
+          if (battle.book >= SIZE) { toWin(); return; }
+          battle.turn++;
+          if (game.stats.stamina <= 0) { toLose("stamina"); return; }
+          if (battle.turn > battle.turnLimit) { toLose("time"); return; }
+          toCommand();
+        });
+        battle.pending = null;
+      }
+    }
+  }
+
+  function loop() { update(); draw(); requestAnimationFrame(loop); }
+
+  // =======================================================================
+  //  入力
+  // =======================================================================
+  const UP=["ArrowUp","w","W"], DOWN=["ArrowDown","s","S"],
+        LEFT=["ArrowLeft","a","A"], RIGHT=["ArrowRight","d","D"],
+        OK=["Enter"," ","z","Z"];
+
+  function startOpening() { game.mode = "opening"; op.start = performance.now(); }
+  function finishOpening() { startBattle(); game.mode = "battle"; }
+
+  function confirm() {
+    if (game.mode === "title") { startOpening(); return; }
+    if (game.mode === "opening") { finishOpening(); return; }
+    if (game.mode === "ending") { game.mode = "title"; return; }
+    if (battle.phase === "command") { chooseCommand(); return; }
+    if (["intro","result","win","lose"].includes(battle.phase)) {
+      if (battle.typed < pageLen()) { battle.typed = pageLen(); return; }
+      if (battle.pi < battle.pages.length - 1) { battle.pi++; battle.typed = 0; return; }
+      const n = battle.next; battle.next = null;
+      if (n) n();
+    }
+  }
+
+  window.addEventListener("keydown", function (e) {
+    startAudio();
+    if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].includes(e.key)) e.preventDefault();
+    const k = e.key;
+    if (game.mode === "opening" && k === "Escape") { finishOpening(); return; }
+    if (game.mode === "ending" && k === "Escape") { game.mode = "title"; return; }
+    if (game.mode === "battle" && battle.phase === "command") {
+      if (UP.includes(k)) battle.cursor = (battle.cursor + COMMANDS.length - 2) % COMMANDS.length;
+      else if (DOWN.includes(k)) battle.cursor = (battle.cursor + 2) % COMMANDS.length;
+      else if (LEFT.includes(k)) battle.cursor = (battle.cursor + COMMANDS.length - 1) % COMMANDS.length;
+      else if (RIGHT.includes(k)) battle.cursor = (battle.cursor + 1) % COMMANDS.length;
+      else if (OK.includes(k)) confirm();
+    } else {
+      if (OK.includes(k)) confirm();
+    }
+  });
+  function canvasPos(e) {
+    const r = canvas.getBoundingClientRect();
+    return { x: (e.clientX - r.left) / r.width * VW, y: (e.clientY - r.top) / r.height * VH };
+  }
+  function commandHitIndex(p) {
+    for (let i = 0; i < COMMANDS.length; i++) {
+      const cx = 8 + (i % 2) * 120;
+      const cy = 191 + ((i / 2) | 0) * 13;
+      if (p.x >= cx && p.x <= cx + 116 && p.y >= cy && p.y <= cy + 18) return i;
+    }
+    return -1;
+  }
+  window.addEventListener("pointerdown", function (e) {
+    e.preventDefault();
+    startAudio();
+    // バトルのコマンド選択中はクリック位置で当たり判定(誤確定を防ぐ)
+    if (game.mode === "battle" && battle.phase === "command") {
+      const p = canvasPos(e);
+      const hit = commandHitIndex(p);
+      if (hit >= 0) {
+        battle.cursor = hit; chooseCommand(); return;
+      }
+      return; // コマンド枠外のクリックは無視
+    }
+    confirm();
+  }, { passive:false });
+  window.addEventListener("touchmove", function (e) { e.preventDefault(); }, { passive:false });
+  window.addEventListener("gesturestart", function (e) { e.preventDefault(); }, { passive:false });
+  window.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+
+  // =======================================================================
+  //  サウンド(Web Audio API / 16bit風BGM)
+  // =======================================================================
+  const audio = { ctx:null, timer:null, step:0, track:"", master:null, noise:null };
+  const TRACKS = {
+    title: {
+      step:148, vol:0.021,
+      mel:["A4",null,null,"C5",null,"E5",null,null,"D5",null,"C5",null,"A4",null,null,null,
+           "F4",null,"A4",null,"C5",null,"B4",null,"G4",null,"E4",null,"A4",null,null,null],
+      bas:["A2",null,null,null,"A2",null,null,null,"F2",null,null,null,"F2",null,null,null,
+           "C3",null,null,null,"G2",null,null,null,"E2",null,null,null,"A2",null,null,null],
+      arp:["A3",null,"C4",null,"E4",null,"C4",null,"F3",null,"A3",null,"C4",null,"A3",null],
+      drum:false
+    },
+    opening: {
+      step:118, vol:0.028,
+      mel:["A4",null,"C5","D5","E5",null,"D5","C5","A4",null,"G4","A4","C5",null,"D5",null,
+           "E5",null,"G5","E5","D5",null,"C5","A4","G4",null,"A4","C5","D5",null,"E5",null],
+      bas:["A2",null,"A2",null,"F2",null,"F2",null,"G2",null,"G2",null,"E2",null,"E2",null,
+           "A2",null,"A2",null,"F2",null,"F2",null,"D2",null,"D2",null,"E2",null,"E2",null],
+      arp:["A3","E4","A4","C5","F3","C4","F4","A4","G3","D4","G4","B4","E3","B3","E4","G4"],
+      drum:true
+    },
+    battle: {
+      step:118, vol:0.026,
+      mel:["E5",null,"E5","G5",null,"A5",null,"E5","D5",null,"C5",null,"D5",null,"E5",null,
+           "A4",null,"C5","E5",null,"G5",null,"E5","F5",null,"E5","D5",null,"B4",null,null],
+      bas:["A2",null,"A2",null,"A2",null,"E2",null,"F2",null,"F2",null,"G2",null,"E2",null,
+           "A2",null,"A2",null,"C3",null,"C3",null,"D3",null,"D3",null,"E2",null,"E2",null],
+      arp:["A3",null,"C4",null,"E4",null,"C4",null,"F3",null,"A3",null,"C4",null,"A3",null],
+      drum:true
+    },
+    win: {
+      step:112, vol:0.03,
+      mel:["C5","E5","G5","C6","B5","G5","E5","C5","D5","F5","A5","D6","C6","A5","G5",null,
+           "E5","G5","C6","E6","D6","C6","A5","G5","C6",null,"G5",null,"E5",null,"C5",null],
+      bas:["C3",null,"C3",null,"G2",null,"G2",null,"A2",null,"A2",null,"F2",null,"G2",null,
+           "C3",null,"C3",null,"E3",null,"E3",null,"F3",null,"G3",null,"C3",null,"C3",null],
+      arp:["C4","E4","G4","C5","G3","B3","D4","G4","A3","C4","E4","A4","F3","A3","C4","F4"],
+      drum:true
+    },
+    lose: {
+      step:150, vol:0.023,
+      mel:["E4",null,"D4",null,"C4",null,"B3",null,"A3",null,"C4",null,"B3",null,null,null,
+           "D4",null,"C4",null,"B3",null,"G3",null,"A3",null,null,null,"E3",null,null,null],
+      bas:["A2",null,null,null,"F2",null,null,null,"D2",null,null,null,"E2",null,null,null,
+           "A2",null,null,null,"F2",null,null,null,"D2",null,null,null,"E2",null,null,null],
+      arp:["A3","C4","E4","C4","F3","A3","C4","A3","D3","F3","A3","F3","E3","G3","B3","G3"],
+      drum:false
+    }
+  };
+  function freq(n) {
+    if (!n) return 0;
+    const m = {C:-9,D:-7,E:-5,F:-4,G:-2,A:0,B:2};
+    const mm = n.match(/^([A-G])(#?)(\d)$/); if (!mm) return 0;
+    return 440 * Math.pow(2, (m[mm[1]] + (mm[2]?1:0) + (Number(mm[3])-4)*12) / 12);
+  }
+  function blip(note, time, len, vol, type) {
+    if (!note) return;
+    const o = audio.ctx.createOscillator(), g = audio.ctx.createGain();
+    o.type = type || "square"; o.frequency.value = freq(note);
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.linearRampToValueAtTime(vol, time + 0.01);
+    g.gain.setValueAtTime(vol, time + len*0.7);
+    g.gain.linearRampToValueAtTime(0.0001, time + len);
+    o.connect(g).connect(audio.master || audio.ctx.destination);
+    o.start(time); o.stop(time + len);
+  }
+  function noteAt(seq, i) { return seq[i % seq.length]; }
+  function curTrackName() {
+    if (game.mode === "battle") return "battle";
+    if (game.mode === "opening") return "opening";
+    if (game.mode === "ending") return ending.result === "lose" ? "lose" : "win";
+    return "title";
+  }
+  function makeNoise() {
+    const len = audio.ctx.sampleRate / 2;
+    const buf = audio.ctx.createBuffer(1, len, audio.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    return buf;
+  }
+  function noiseHit(time, len, vol) {
+    const src = audio.ctx.createBufferSource(), g = audio.ctx.createGain(), f = audio.ctx.createBiquadFilter();
+    src.buffer = audio.noise;
+    f.type = "highpass"; f.frequency.value = 1800;
+    g.gain.setValueAtTime(vol, time);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + len);
+    src.connect(f).connect(g).connect(audio.master);
+    src.start(time); src.stop(time + len);
+  }
+  function kick(time, vol) {
+    const o = audio.ctx.createOscillator(), g = audio.ctx.createGain();
+    o.type = "triangle";
+    o.frequency.setValueAtTime(90, time);
+    o.frequency.exponentialRampToValueAtTime(38, time + 0.12);
+    g.gain.setValueAtTime(vol, time);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + 0.14);
+    o.connect(g).connect(audio.master);
+    o.start(time); o.stop(time + 0.14);
+  }
+  function scheduleMusic() {
+    if (!audio.ctx) return;
+    const name = curTrackName();
+    if (audio.track !== name) { audio.track = name; audio.step = 0; }
+    const tr = TRACKS[name], i = audio.step, t = audio.ctx.currentTime + 0.035;
+    const stepLen = tr.step / 1000;
+
+    blip(noteAt(tr.bas, i), t, stepLen * 1.55, tr.vol * 0.78, "triangle");
+    blip(noteAt(tr.arp, i), t + stepLen * 0.12, stepLen * 0.55, tr.vol * 0.22, "square");
+    blip(noteAt(tr.mel, i), t, stepLen * 1.05, tr.vol, "square");
+
+    if (tr.drum) {
+      if (i % 8 === 0) kick(t, tr.vol * 2.2);
+      if (i % 8 === 4) noiseHit(t, 0.065, tr.vol * 0.9);
+      if (i % 4 === 2) noiseHit(t, 0.018, tr.vol * 0.22);
+    }
+    audio.step++;
+    audio.timer = setTimeout(scheduleMusic, tr.step);
+  }
+  function startAudio() {
+    if (audio.ctx) return;
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    audio.ctx = new AC();
+    audio.master = audio.ctx.createGain();
+    audio.master.gain.value = 0.38;
+    audio.master.connect(audio.ctx.destination);
+    audio.noise = makeNoise();
+    if (audio.ctx.state === "suspended") audio.ctx.resume();
+    scheduleMusic();
+  }
+
+  // =======================================================================
+  //  起動
+  // =======================================================================
+  game.mode = "title";       // タイトル -> オープニング -> バトル
+  requestAnimationFrame(loop);
+  </script>
+</body>
+</html>

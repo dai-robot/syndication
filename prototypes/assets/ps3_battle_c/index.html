@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PS3 Battle Prototype C</title>
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#08020a}
+#wrap{position:relative;width:100vw;height:100vh}canvas{display:block}#hud{position:absolute;inset:0;pointer-events:none}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="hud"></canvas></div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script>
+"use strict";
+const wrap=document.getElementById("wrap"),hud=document.getElementById("hud"),ui=hud.getContext("2d");
+const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);renderer.shadowMap.enabled=true;wrap.prepend(renderer.domElement);
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x09020b);scene.fog=new THREE.Fog(0x09020b,7,28);
+const camera=new THREE.PerspectiveCamera(48,innerWidth/innerHeight,.1,100);camera.position.set(6.7,4.2,6.0);camera.lookAt(.2,1.15,-.4);
+const clock=new THREE.Clock(),fx=new THREE.Group();scene.add(fx);
+const state={cursor:0,phase:"idle",timer:0,cfo:100,ki:100,nema:50,review:55,demand:70,trust:62,sp:115,market:48,msg:["強気CFOドラゴン戦","100億円。なるべく タイトで。"],warn:0};
+const commands=["説明する","根回しする","条件調整","市場を待つ"];
+const mat=(c,r=.65,mt=.05)=>new THREE.MeshStandardMaterial({color:c,roughness:r,metalness:mt});
+const emi=(c,i=1.2)=>new THREE.MeshStandardMaterial({color:c,emissive:c,emissiveIntensity:i,roughness:.35});
+function add(o,x,y,z){o.position.set(x,y,z);o.castShadow=o.receiveShadow=true;scene.add(o);return o}
+function box(w,h,d,m,x,y,z){return add(new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m),x,y,z)}
+function sph(r,m,x,y,z,sx=1,sy=1,sz=1){const o=add(new THREE.Mesh(new THREE.SphereGeometry(r,18,12),m),x,y,z);o.scale.set(sx,sy,sz);return o}
+function cone(r,h,m,x,y,z){return add(new THREE.Mesh(new THREE.ConeGeometry(r,h,16),m),x,y,z)}
+scene.add(new THREE.HemisphereLight(0x88aaff,0x240606,.45));
+const redL=new THREE.PointLight(0xff3355,2.0,15);redL.position.set(0,3,-2);scene.add(redL);
+const blueL=new THREE.PointLight(0x66ccff,1.3,12);blueL.position.set(3,2.4,2);scene.add(blueL);
+const key=new THREE.DirectionalLight(0xe8f2ff,.8);key.position.set(4,6,4);key.castShadow=true;scene.add(key);
+// hybrid crisis room
+box(12,.2,11,mat(0x15151e),0,-.1,0);
+box(12,5,.2,mat(0x170914),0,2.3,-5);
+box(.2,5,11,mat(0x101521),-6,2.3,0);box(.2,5,11,mat(0x101521),6,2.3,0);
+const chartGroup=new THREE.Group();scene.add(chartGroup);
+box(6.8,2.7,.08,emi(0x120914,.45),0,2.55,-4.82);
+for(let i=0;i<12;i++){const x=-3+i*.55,y=1.55+Math.sin(i*.75)*.3+i*.06;box(.05,.9,.04,emi(i>6?0xff244d:0x66ccff,1.1),x,y,-4.75).scale.y=.4+Math.abs(Math.sin(i))*1.2}
+for(let i=0;i<7;i++){const seg=box(.62,.04,.04,emi(0xff3355,1.5),-2.8+i*.8,1.55+i*.15+Math.sin(i)*.25,-4.7);seg.rotation.z=.22+Math.sin(i)*.3;chartGroup.add(seg)}
+function labelPlane(txt,x,y,z,c){const cn=document.createElement("canvas");cn.width=256;cn.height=64;const ct=cn.getContext("2d");ct.fillStyle="rgba(0,0,0,.0)";ct.fillRect(0,0,256,64);ct.fillStyle=c;ct.font="bold 34px sans-serif";ct.fillText(txt,8,44);const tex=new THREE.CanvasTexture(cn);const m=new THREE.MeshBasicMaterial({map:tex,transparent:true,depthWrite:false});const p=new THREE.Mesh(new THREE.PlaneGeometry(1.9,.48),m);p.position.set(x,y,z);scene.add(p);return p}
+const word1=labelPlane("TIGHT",-2.6,3.65,-4.55,"#ff5577"),word2=labelPlane("100億",0,3.25,-4.55,"#facc15"),word3=labelPlane("5bp",2.45,3.55,-4.55,"#ff5577");
+box(4.8,.12,1.35,mat(0x4a2818),0,.65,.55);box(4.6,.08,1.2,mat(0x7b4a25),0,.75,.55);box(1.2,.05,.4,mat(0xe8edf4),-.6,.85,.28);box(.9,.05,.36,mat(0xe8edf4),.55,.86,.28);
+function hero(){const g=new THREE.Group();scene.add(g);const suit=mat(0x18284d),skin=mat(0xd89a68),hair=mat(0x3a2417),paper=mat(0xe8edf4);
+ const body=new THREE.Mesh(new THREE.BoxGeometry(.55,.94,.28),suit);body.position.y=1.05;g.add(body);const head=new THREE.Mesh(new THREE.SphereGeometry(.26,18,12),skin);head.position.y=1.72;g.add(head);const h=new THREE.Mesh(new THREE.SphereGeometry(.27,14,8),hair);h.scale.set(1,.45,1);h.position.y=.14;head.add(h);
+ const tie=new THREE.Mesh(new THREE.BoxGeometry(.08,.42,.04),mat(0xd23d3d));tie.position.set(0,1.12,.17);g.add(tie);const tab=new THREE.Mesh(new THREE.BoxGeometry(.58,.36,.04),paper);tab.position.set(.55,.95,.24);tab.rotation.z=-.2;g.add(tab);
+ for(const sx of[-.42,.42]){const a=new THREE.Mesh(new THREE.BoxGeometry(.16,.64,.16),suit);a.position.set(sx,1.08,.04);a.rotation.z=sx*.6;g.add(a)}for(const sx of[-.16,.16]){const l=new THREE.Mesh(new THREE.BoxGeometry(.18,.7,.18),mat(0x07101f));l.position.set(sx,.25,0);g.add(l)}
+ g.position.set(2.2,.05,.45);g.rotation.y=-.78;return g}
+function dragon(){const g=new THREE.Group();scene.add(g);const sc=mat(0x2f8f8a),sc2=mat(0x1b665f),suit=mat(0x17203d),horn=mat(0xd9c27c),eye=emi(0xff3344,2.0);
+ const body=new THREE.Mesh(new THREE.SphereGeometry(.62,18,12),suit);body.scale.set(.9,1.35,.58);body.position.y=1.03;g.add(body);const head=new THREE.Mesh(new THREE.SphereGeometry(.44,18,12),sc);head.position.set(0,1.95,.03);head.scale.set(1.18,.85,1);g.add(head);
+ const sn=new THREE.Mesh(new THREE.BoxGeometry(.54,.22,.44),sc2);sn.position.set(0,1.87,.37);g.add(sn);for(const sx of[-.25,.25]){const h=cone(.08,.48,horn,sx,2.35,0);h.rotation.z=-sx*.8;g.add(h)}
+ for(const sx of[-.17,.17]){const e=new THREE.Mesh(new THREE.SphereGeometry(.06,8,6),eye);e.position.set(sx,2.02,.39);g.add(e)}
+ const jaw=new THREE.Mesh(new THREE.BoxGeometry(.42,.08,.34),mat(0x5b1414));jaw.position.set(0,1.76,.45);g.add(jaw);const tie=new THREE.Mesh(new THREE.BoxGeometry(.11,.5,.04),mat(0xa91f2f));tie.position.set(0,1.13,.34);g.add(tie);
+ for(let i=0;i<16;i++){const q=new THREE.Mesh(new THREE.SphereGeometry(.025,6,4),emi(0xff3355,.8));q.position.set(-.35+(i%4)*.22,1.8+Math.floor(i/4)*.1,.4);g.add(q)}
+ for(const sx of[-.65,.65]){const a=new THREE.Mesh(new THREE.BoxGeometry(.18,.72,.18),sc);a.position.set(sx,1.05,.05);a.rotation.z=-sx*.5;g.add(a)}
+ g.position.set(-2.15,.05,.1);g.rotation.y=.55;return g}
+const H=hero(),D=dragon();
+function clear(){while(fx.children.length)fx.remove(fx.children[0])}
+function beams(color,n,fromScreen=false){clear();for(let i=0;i<n;i++){const o=new THREE.Mesh(new THREE.SphereGeometry(.045,8,6),emi(color,1.8));o.userData={a:i/n,l:0,fromScreen};fx.add(o)}}
+function run(){if(state.phase!=="idle")return;const c=commands[state.cursor];state.phase="act";state.timer=0;let down=15,ok=true;state.ki-=5;
+ if(c==="根回しする"){down=20;state.demand+=10;state.nema-=8;beams(0x66ccff,10)}else if(c==="条件調整"){down=25;state.sp+=5;state.trust-=5;beams(0xfacc15,8)}else if(c==="市場を待つ"){state.market+=8;state.ki-=3;ok=Math.random()>.5;down=ok?-5:0;beams(0xff3355,10,true);state.warn=1}else{state.trust+=5;beams(0xffffff,6)}
+ if(ok){state.cfo=Math.max(0,state.cfo-down);state.msg=["投資家需要が 10億 あつまった",c+" でCFO強気度が低下。"]}else{state.cfo=Math.min(100,state.cfo+5);state.trust-=5;state.msg=["CFOの信頼が さがった","TIGHT圧力が 強まった。"]}if(state.cfo<=0)state.msg=["CFOは しずかに うなずいた","条件決定へ 進め！"]}
+function drawHud(){hud.width=innerWidth*devicePixelRatio;hud.height=innerHeight*devicePixelRatio;ui.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);const w=innerWidth,h=innerHeight;ui.clearRect(0,0,w,h);
+ function p(x,y,ww,hh){ui.fillStyle="rgba(8,4,12,.64)";ui.fillRect(x,y,ww,hh);ui.strokeStyle="rgba(255,90,120,.9)";ui.strokeRect(x+.5,y+.5,ww-1,hh-1)}
+ p(22,18,300,58);ui.font="16px sans-serif";ui.fillStyle="#fff";ui.fillText("MARKET CRISIS  CFO強気度 "+Math.round(state.cfo),40,43);ui.fillStyle="#ff3355";ui.fillRect(40,55,230*(state.cfo/100),7);
+ p(24,h-132,230,108);p(w-270,h-132,246,108);p(w/2-150,h-142,300,120);ui.fillStyle="#f6f7ff";ui.fillText("気力 "+state.ki+"  根回 "+state.nema+"  審査 "+state.review,44,h-82);ui.fillText("需要 "+state.demand+"億  SP "+state.sp+"bp",w-250,h-82);ui.fillText("信頼 "+state.trust+"  地合 "+state.market,w-250,h-56);ui.fillText(state.msg[0],w/2-125,h-112);ui.fillText(state.msg[1],w/2-125,h-88);
+ for(let i=0;i<4;i++){ui.fillStyle=i===state.cursor?"rgba(255,70,110,.36)":"rgba(255,255,255,.05)";ui.fillRect(w/2-132,h-66+i*18,170,16);ui.fillStyle=i===state.cursor?"#fff":"#d8e4ff";ui.fillText((i===state.cursor?"▶ ":"   ")+commands[i],w/2-124,h-54+i*18)}}
+function loop(){const dt=clock.getDelta(),time=clock.elapsedTime;D.position.y=.05+Math.sin(time*1.4)*.05;D.rotation.z=Math.sin(time*.9)*.03;chartGroup.rotation.z=(state.warn?Math.sin(time*22)*.025:Math.sin(time*.8)*.004);word1.position.y=3.65+Math.sin(time*2)*.06;word2.position.y=3.25+Math.sin(time*2.3)*.05;word3.position.y=3.55+Math.sin(time*2.7)*.07;
+ if(state.phase==="act"){state.timer+=dt;H.position.x=2.2-Math.sin(Math.min(1,state.timer*3)*Math.PI)*.55;if(state.timer>.25&&state.timer<.6){redL.intensity=3.5}else redL.intensity=2;if(state.timer>1.1){state.phase="idle";H.position.x=2.2;state.warn=0;clear()}}
+ const redBlink=state.phase==="act"&&state.timer>.25&&state.timer<.6&&Math.sin(time*45)>0;
+ D.traverse(o=>{if(o.material&&o.material.emissive){o.material.emissive=new THREE.Color(redBlink?0x770000:0x000000);o.material.emissiveIntensity=redBlink?1.8:0}});
+ fx.children.forEach(o=>{o.userData.l+=dt*1.4;const k=(o.userData.l+o.userData.a)%1;const a=o.userData.fromScreen?new THREE.Vector3(0,2.4,-4.5):H.position;const b=D.position;o.position.lerpVectors(a,b,k);o.position.y+=Math.sin(k*Math.PI)*.7;o.scale.setScalar(1.2-k*.6)});
+ renderer.render(scene,camera);drawHud();requestAnimationFrame(loop)}
+addEventListener("keydown",e=>{if(["ArrowUp","ArrowDown","Enter"," "].includes(e.key))e.preventDefault();if(e.key==="ArrowUp")state.cursor=(state.cursor+3)%4;else if(e.key==="ArrowDown")state.cursor=(state.cursor+1)%4;else if(e.key==="Enter"||e.key===" ")run()});
+addEventListener("resize",()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+loop();
+</script>
+</body>
+</html>

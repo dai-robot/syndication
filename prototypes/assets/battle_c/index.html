@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Battle Prototype C</title>
+<style>
+html,body{margin:0;width:100%;height:100%;background:#030712;display:flex;align-items:center;justify-content:center;overflow:hidden}
+canvas{width:min(768px,100vw);height:auto;max-height:100vh;aspect-ratio:256/224;background:#000;image-rendering:pixelated;image-rendering:crisp-edges}
+</style>
+</head>
+<body>
+<canvas id="game" width="256" height="224"></canvas>
+<script>
+"use strict";
+const c=document.getElementById("game"),x=c.getContext("2d");x.imageSmoothingEnabled=false;
+const W=256,H=224;
+const C={bg:"#050814",panel:"#081225",panel2:"#101c36",frame:"#d9c27c",white:"#f4f5f7",gray:"#9aa6bd",red:"#dc2626",green:"#22c55e",blue:"#3b82f6",cyan:"#67e8f9",gold:"#facc15",wood:"#5a351b",wood2:"#2c170c",skin:"#f1c79b",skin2:"#cf9a63",suit:"#18284d",suit2:"#0b1328",dragon:"#2f8f8a",dragon2:"#1f6b66"};
+function r(a,b,w,h,col){x.fillStyle=col;x.fillRect(a|0,b|0,w|0,h|0)}
+function tx(s,a,b,col,size=8){x.fillStyle=col||C.white;x.font=size+"px 'MS Gothic','Courier New',monospace";x.textBaseline="top";x.fillText(s,a,b)}
+function panel(a,b,w,h){r(a,b,w,h,"#020617");r(a+1,b+1,w-2,h-2,C.frame);r(a+2,b+2,w-4,h-4,C.panel);r(a+4,b+4,w-8,h-8,C.panel2);for(let yy=b+6;yy<b+h-5;yy+=5)for(let xx=a+6+(yy&1);xx<a+w-5;xx+=7)r(xx,yy,1,1,"#1a2748")}
+function meter(a,b,w,v,max,col){r(a-1,b-1,w+2,5,C.frame);r(a,b,w,3,"#263044");r(a,b,Math.round(w*v/max),3,col);r(a,b,Math.round(w*v/max),1,"rgba(255,255,255,.45)")}
+const cmds=["説明する","根回しする","条件調整","市場を待つ"];
+let tick=0,cursor=0,phase="command",anim=0,flash=0,shake=0,move=0,msg=["強気CFOドラゴンが あらわれた！","100億円。なるべく タイトで。"];
+const st={ki:78,nema:66,demand:72,trust:49,spread:112,market:54};
+function bg(){
+  r(0,0,W,128,"#111827");r(0,0,W,13,"#0a1020");r(0,13,W,2,C.frame);
+  for(let y=22;y<114;y+=8)r(0,y,W,1,y%16?"#17213a":"#26334f");for(let i=0;i<70;i++)r((i*29)%W,18+(i*13)%92,1,1,i%2?"#1f2d4a":"#0b1328");
+  // terminal board
+  r(6,24,45,44,"#020617");r(7,25,43,42,C.frame);r(9,27,39,38,"#06152c");tx("BOOK",12,31,C.gold,7);tx("100.0",12,42,C.green,8);tx("SP 112",12,54,C.cyan,7);
+  // large window
+  const wx=58,wy=18,ww=174,wh=72;r(wx-3,wy-3,ww+6,wh+6,C.frame);r(wx-1,wy-1,ww+2,wh+2,"#111827");r(wx,wy,ww,wh,"#061024");
+  r(wx,wy,ww,18,"#0b1b3f");r(wx,wy+18,ww,22,"#0e2854");r(wx+146,wy+8,14,14,"#e9e6c8");r(wx+151,wy+10,10,11,"#0b1b3f");
+  for(let i=0;i<38;i++){let sx=wx+4+(i*41)%(ww-8),sy=wy+3+(i*23)%45;if((i+(tick>>4))%3)r(sx,sy,1,1,i%2?C.white:C.gray)}
+  for(let i=0;i<12;i++){let bx=wx+2+i*15,bw=10+(i%3),bh=18+(i*11)%43;r(bx,wy+wh-bh,bw,bh,i%2?"#11234b":"#0b1a38");r(bx,wy+wh-bh,bw,1,"#315184");for(let yy=wy+wh-bh+3;yy<wy+wh-2;yy+=6)for(let xx=bx+2;xx<bx+bw-1;xx+=4){let on=((i*9+xx+yy+(tick>>5))%5)<2;r(xx,yy,1,2,on?C.gold:"#071126")}}
+  r(wx+55,wy,2,wh,"#111c32");r(wx+116,wy,2,wh,"#111c32");r(wx,wy+38,ww,2,"#111c32");
+  // desk
+  r(0,103,W,25,C.wood);r(0,103,W,3,"#936236");r(0,123,W,5,C.wood2);for(let i=0;i<W;i+=12){r(i,111,7,1,"#7a4b25");r(i+4,119,8,1,"#2a160b")}
+  // documents / deal book / phone
+  r(89,96,40,12,C.white);tx("100億",96,99,"#1e3a8a",8);r(132,96,31,11,"#eef2f7");r(136,102,3,3,C.blue);r(143,100,3,5,C.green);r(150,98,3,7,C.gold);
+  r(169,96,28,10,"#f7efd6");tx("TERM",172,99,"#1f2937",6);r(203,93,13,16,"#0b1328");r(205,96,9,2,C.gray);r(205,101,9,2,C.gray);
+  for(let i=0;i<5;i++){r(54+i*9,99+(i&1),8,5,"#efe7cf");r(55+i*9,101+(i&1),6,1,C.gray)}
+}
+function dragon(a,b){
+  a+=shake?((tick&1)?1:-1):0;let bob=(tick>>4)&1;if(flash&&((tick>>1)&1)){r(a,b,64,76,C.white);return}
+  r(a+8,b+1,8,10,"#d9c9a3");r(a+47,b+1,8,10,"#d9c9a3");r(a+12,b+10,44,18,C.dragon2);r(a+8,b+20,52,18,C.dragon);r(a+13,b+35,42,9,C.dragon2);
+  r(a+18,b+22,7,5,C.gold);r(a+40,b+22,7,5,C.gold);r(a+21,b+23,2,2,"#020617");r(a+43,b+23,2,2,"#020617");r(a+28,b+33,15,4,"#5b1414");for(let i=0;i<6;i++)r(a+29+i*3,b+33,1,5,C.white);
+  for(let i=0;i<30;i++)r(a+13+(i%8)*5,b+12+((i/8)|0)*7,1,1,i%2?C.cyan:C.dragon2);
+  r(a+17,b+47,36,7,C.white);r(a+24,b+48,20,23,C.red);r(a+8,b+54,52,25,C.suit);r(a+12,b+55,44,6,"#28406f");r(a+3,b+60,12,12,C.dragon);r(a+55,b+60,11,12,C.dragon);
+  r(a+14,b+78,17,4,"#020617");r(a+38,b+78,17,4,"#020617");r(a+51,b+45,6,2,C.gold);
+  if(bob)r(a+24,b+47,19,1,C.white);
+}
+function hero(a,b){
+  a+=move;let typing=phase==="act"&&((anim>>2)&1);r(a+12,b,21,6,"#3f2410");r(a+9,b+5,27,9,"#6b3f1f");r(a+12,b+14,23,14,C.skin);r(a+15,b+19,3,3,"#020617");r(a+27,b+19,3,3,"#020617");r(a+19,b+25,8,2,C.skin2);
+  r(a+14,b+31,20,5,C.white);r(a+9,b+36,31,24,C.suit);r(a+12,b+38,24,3,"#2b477a");r(a+21,b+37,5,18,C.red);
+  r(a+3,b+42,9,18,C.suit2);r(a+38,b+42,9,18,C.suit2);r(a+0,b+52,12,8,C.white);r(a+36,b+52,13,8,C.white);
+  r(a+11,b+60,10,13,"#111827");r(a+28,b+60,10,13,"#111827");r(a+9,b+72,13,3,"#020617");r(a+27,b+72,13,3,"#020617");
+  r(a-12,b+45,30,11,"#020617");r(a-10,b+47,26,6,"#0a1b33");if(typing)r(a+2,b+49,5,1,C.green);
+}
+function ui(){
+  panel(3,129,78,47);tx("LEAD",11,135,C.gold,8);tx("気力 "+st.ki,11,148,C.white,8);meter(45,150,27,st.ki,100,C.green);tx("根回 "+st.nema,11,159,C.white,8);tx("信頼 "+st.trust,11,169,C.white,8);
+  panel(83,129,89,47);tx("COMMAND",92,135,C.gold,8);for(let i=0;i<4;i++)tx((i===cursor?"▶ ":"  ")+cmds[i],92,147+i*9,i===cursor?C.gold:C.white,8);
+  panel(174,129,79,47);tx("DEAL",183,135,C.gold,8);tx("需要 "+st.demand,183,148,C.white,8);tx("SP "+st.spread+"bp",183,159,C.white,8);tx("市況 "+st.market,183,169,C.white,8);
+  panel(3,178,250,43);tx(msg[0],12,186,C.white,10);tx(msg[1],12,203,C.white,10);
+}
+function decide(){phase="act";anim=0;msg=["主幹事は "+cmds[cursor]+" を選択。","条件表と投資家リストを 更新した。"]}
+function update(){tick++;if(flash>0)flash--;if(shake>0)shake--;if(phase==="act"){anim++;move=anim<9?-anim:Math.max(-9,-18+anim);if(anim===10){flash=9;shake=10}if(anim>25){move=0;phase="command"}}}
+function draw(){r(0,0,W,H,C.bg);bg();dragon(34,25);hero(191,55);ui()}
+function loop(){update();draw();requestAnimationFrame(loop)}
+addEventListener("keydown",e=>{if(["ArrowUp","ArrowDown","Enter"," "].includes(e.key))e.preventDefault();if(e.key==="ArrowUp")cursor=(cursor+3)%4;else if(e.key==="ArrowDown")cursor=(cursor+1)%4;else if(e.key==="Enter"||e.key===" ")decide()});
+loop();
+</script>
+</body>
+</html>
