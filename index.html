@@ -434,13 +434,14 @@
 
   const ENEMY = { name:"100億円 シニア社債" };
   const SIZE = 100;            // 目標オーダー額(億円)
+  const ORDER_TICKET_DURATION = 180; // 約3秒。投資家名と金額を読ませるため長めに見せる。
 
   // ブックビルディングのコマンド
   const COMMANDS = [
     { id:"widen",     label:"ワイドニング" },   // 需要↑(気力↓)
     { id:"tighten",   label:"タイトニング" },   // 気力回復(需要↓)
     { id:"explain",   label:"ロードショー" },
-    { id:"nemawashi", label:"ディール" }
+    { id:"nemawashi", label:"必殺オーダー" }
   ];
 
   const battle = {
@@ -520,13 +521,13 @@
     } else if (id === "nemawashi") {
       if (game.stats.nemawashi < 5) {
         battle.pending = { amount:0, noTurn:true,
-          pages:[["ディールを 組むには", "根回し力が たりない！"]] };
+          pages:[["必殺オーダーには", "根回し力が たりない！"]] };
         return;
       }
-      applyStat({ stamina:-4, nemawashi:-5 });
-      battle.trend = 0; imm = 10;
-      pages = [["ディールがまとまり はじめた！", ""],
-               ["まとまった オーダーが 入った", ""]];
+      applyStat({ stamina:-18, nemawashi:-5 });
+      battle.trend = 0; imm = 24;
+      pages = [["必殺オーダーを たたき込んだ！", ""],
+               ["大型オーダー！ ただし 気力 -18", ""]];
     }
 
     // このターンに入る投資家オーダー(億)
@@ -805,21 +806,33 @@
   }
   function drawEffects() {
     if (battle.ticketT > 0) {
-      const t = 50 - battle.ticketT;
-      const x = Math.min(104, -52 + t * 4);
-      const y = 52 + Math.sin(t / 5) * 2;
-      rect(x, y, 58, 20, "#efe7cf");
-      rect(x, y, 58, 2, "#caa15a");
-      rect(x, y + 18, 58, 2, "#9a6b36");
-      rect(x + 2, y + 4, 54, 1, "#9aa6bd");
-      btext(battle.ticketName || "INVESTOR", x + 4, y + 6, "#1f2937", 1);
-      btext("+" + battle.ticketAmount + " OKU", x + 4, y + 13, "#1e3a8a", 1);
-      // ブック側へ吸収される光のライン
-      if (t > 18) {
-        const lx = Math.min(156, x + 58 + (t - 18) * 3);
-        rect(x + 58, y + 10, lx - (x + 58), 1, "#7dffb0");
-        rect(153, 95, 18, 10, "#f4f5f7");
-        btext("BOOK", 156, 98, "#1e3a8a", 1);
+      const total = ORDER_TICKET_DURATION;
+      const t = total - battle.ticketT;
+      const fly = Math.min(1, t / 58);
+      const ease = 1 - Math.pow(1 - fly, 3);
+      const absorb = Math.max(0, Math.min(1, (t - 142) / 26));
+      const w = 82, h = 30;
+      const x = Math.round(-90 + 166 * ease + absorb * 18);
+      const y = Math.round(48 + Math.sin(t / 7) * 2 - absorb * 4);
+      rect(x + 3, y + 3, w, h, "rgba(0,0,0,0.35)");
+      rect(x - 2, y - 2, w + 4, h + 4, "#3a2410");
+      rect(x - 1, y - 1, w + 2, h + 2, "#caa15a");
+      rect(x, y, w, h, "#fff7d8");
+      rect(x, y, w, 4, "#facc15");
+      rect(x, y + h - 4, w, 4, "#d9a441");
+      rect(x + 5, y + 9, w - 10, 1, "#cdd4e0");
+      rect(x + 5, y + 21, w - 10, 1, "#cdd4e0");
+      btext("ORDER TICKET", x + 8, y + 6, "#7c2d12", 1);
+      btext(battle.ticketName || "INVESTOR", x + 8, y + 14, "#1f2937", 1);
+      text("+" + battle.ticketAmount + "億円", x + 8, y + 22, "#1e3a8a", 9);
+      // 着地後しばらく読ませてから、ブック側へ吸収される光のラインを出す。
+      if (t > 96) {
+        const pulse = (game.tick >> 2) % 2;
+        const lx = Math.min(170, x + w + Math.max(0, t - 96) * 2);
+        rect(x + w, y + 15, lx - (x + w), 2, pulse ? "#7dffb0" : "#facc15");
+        rect(153, 94, 23, 13, "#f4f5f7");
+        rect(154, 95, 21, 11, "#cdd4e0");
+        btext("BOOK", 157, 98, "#1e3a8a", 1);
       }
     }
     if (battle.dealFlash > 0) {
@@ -1675,11 +1688,12 @@
           const investors = ["MEIJI AM", "KANTO BK", "SAKURA LIFE", "NORTH FUND", "CENTRAL AM"];
           battle.ticketName = investors[(battle.turn + amount) % investors.length];
           battle.ticketAmount = amount;
-          battle.ticketT = 50;
+          battle.ticketT = ORDER_TICKET_DURATION;
           if (amount >= 15) { battle.dealFlash = 4; battle.screenShake = 4; }
         }
       }
-      if (t >= 34) {
+      const resultFrame = battle.pending.amount > 0 ? ORDER_TICKET_DURATION : 48;
+      if (t >= resultFrame) {
         battle.phase = "result";
         setPages(battle.pending.pages, function () {
           if (battle.book >= SIZE) { toWin(); return; }
