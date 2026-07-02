@@ -456,12 +456,71 @@
     { id:"nemawashi", label:"必殺オーダー" }
   ];
 
+  // 地合い(市場ムード)。オーダーの入りと 窓の外の天気を左右する
+  function marketMood() {
+    const m = game.stats.market;
+    if (m >= 70) return { label:"快晴", type:"sun" };
+    if (m >= 40) return { label:"くもり", type:"cloud" };
+    return { label:"荒れ模様", type:"rain" };
+  }
+  function drawMoodIcon(x, y, type) {
+    if (type === "sun") {
+      rect(x+2, y+2, 4, 4, "#facc15");
+      rect(x+3, y, 2, 1, "#f59e0b"); rect(x+3, y+7, 2, 1, "#f59e0b");
+      rect(x, y+3, 1, 2, "#f59e0b"); rect(x+7, y+3, 1, 2, "#f59e0b");
+    } else if (type === "cloud") {
+      rect(x+1, y+3, 7, 3, "#9ca3af"); rect(x+2, y+1, 4, 2, "#cdd4e0");
+    } else {
+      rect(x+1, y+1, 7, 3, "#6b7280");
+      rect(x+2, y+5, 1, 3, "#60a5fa"); rect(x+5, y+5, 1, 3, "#60a5fa");
+    }
+  }
+
+  // ターンのおわりに飛び込む マーケットニュース
+  const NEWS = [
+    { label:["米金利が 急上昇！", "地合いが 悪化した…… (地合い↓)"],
+      fx:function(){ applyStat({ market:-16 }); battle.trend = -1; } },
+    { label:["ライバル案件 延期！", "買い手の目が こちらに向いた (地合い↑)"],
+      fx:function(){ applyStat({ market:14 }); battle.trend = 1; } },
+    { label:["格付け見通し ポジティブ！", "発行体信頼↑ ／ 地合い↑"],
+      fx:function(){ applyStat({ trust:6, market:8 }); } },
+    { label:["海外勢に 買いの気配。", "需要トレンド ↑"],
+      fx:function(){ battle.rate = Math.min(18, battle.rate + 2); battle.trend = 1; } },
+    { label:["よくない噂が ながれている……", "地合い↓ ／ 気力 -4"],
+      fx:function(){ applyStat({ market:-8, stamina:-4 }); } }
+  ];
+  function rollNews() {
+    return Math.random() < 0.45 ? NEWS[(Math.random() * NEWS.length) | 0] : null;
+  }
+
+  // パーティクル(約定の火花・完売の紙吹雪)
+  const fx = [];
+  function spawnFx(x, y, n, cols, spd) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2, v = (0.4 + Math.random()) * (spd || 1.5);
+      fx.push({ x:x, y:y, vx:Math.cos(a)*v, vy:Math.sin(a)*v - 0.7, life: 16 + ((Math.random()*16)|0), col: cols[(Math.random()*cols.length)|0] });
+    }
+  }
+  function updateFx() {
+    for (let i = fx.length - 1; i >= 0; i--) {
+      const p = fx[i];
+      p.x += p.vx; p.y += p.vy; p.vy += 0.06; p.life--;
+      if (p.life <= 0) fx.splice(i, 1);
+    }
+  }
+  function drawFx() {
+    for (let i = 0; i < fx.length; i++) {
+      const p = fx[i], s = p.life > 10 ? 2 : 1;
+      rect(p.x, p.y, s, s, p.col);
+    }
+  }
+
   const battle = {
     book: 0,                   // 集まったオーダー累計(億)。SIZE到達で完売=勝利
     shown: 0,                  // ゲージ表示値(なめらかに増やす)
     remaining: SIZE,           // 未販売残高。約定のたびに100億円から減る
     shownRemaining: SIZE,
-    rate: 5,                   // 毎ターンの投資家オーダー額トレンド(億)
+    rate: 6,                   // 毎ターンの投資家オーダー額トレンド(億)
     trend: 0,                  // 直近の傾き(+1↑ / -1↓ / 0)
     turn: 1, turnLimit: 10,
     cursor: 0,
@@ -471,7 +530,8 @@
     pending: null,             // {amount, pages, after}
     animT: 0, animHit: false,
     screenShake: 0, dealFlash: 0,
-    ticketT: 0, ticketAmount: 0, ticketName: "",
+    ticketT: 0, ticketAmount: 0, ticketName: "", ticketCrit: false,
+    momentum: 0,               // 勢い。大口オーダーが続くと 需要が需要を呼ぶ
     next: null
   };
 
@@ -489,16 +549,16 @@
   function startBattle() {
     battle.book = 0; battle.shown = 0;
     battle.remaining = SIZE; battle.shownRemaining = SIZE;
-    battle.rate = 5; battle.trend = 0; battle.turn = 1;
+    battle.rate = 6; battle.trend = 0; battle.turn = 1; battle.momentum = 0;
     battle.cursor = 0; battle.phase = "intro";
     battle.pending = null; battle.animT = 0; battle.animHit = false;
     battle.screenShake = 0; battle.dealFlash = 0;
-    battle.ticketT = 0; battle.ticketAmount = 0; battle.ticketName = "";
+    battle.ticketT = 0; battle.ticketAmount = 0; battle.ticketName = ""; battle.ticketCrit = false;
     game.stats = { stamina:102, nemawashi:20, review:25, demand:0, trust:40, spread:115, market:55 };
     setPages([
       ["100億円 シニア社債の マンデート！", ""],
       ["販売残高は 100億円。", "投資家オーダーで 完売をめざせ。"],
-      ["条件を動かせば 需要も動く。", "主幹事の腕の 見せどころだ。"]
+      ["地合いを読み、勢いに乗れ。", "主幹事の腕の 見せどころだ。"]
     ], toCommand);
   }
   function toCommand() {
@@ -514,7 +574,7 @@
 
     if (id === "widen") {
       applyStat({ stamina:-9, spread:5, nemawashi:4 });
-      battle.rate = Math.min(16, battle.rate + 3);
+      battle.rate = Math.min(18, battle.rate + 3);
       battle.trend = 1;
       pages = [["スプレッドを ワイドに 振った！", ""],
                ["気力 -9 ／ 必殺ゲージ +4", "需要トレンド ↑"]];
@@ -526,7 +586,7 @@
                ["気力 回復 ／ 必殺ゲージ +2", "需要トレンド ↓"]];
     } else if (id === "explain") {
       applyStat({ stamina:-3, trust:4, nemawashi:12 });
-      battle.rate = Math.min(16, battle.rate + 1);
+      battle.rate = Math.min(18, battle.rate + 1);
       battle.trend = 1; imm = 2;
       pages = [["ロードショーで 投資家を 口説いた", ""],
                ["発行体信頼と 必殺ゲージが あがった", ""]];
@@ -543,19 +603,32 @@
                ["大型オーダー！ 気力とゲージを消費", ""]];
     }
 
-    // このターンに入る投資家オーダー(億)
-    let orders = battle.rate + imm + ((Math.random()*3) | 0);
+    // このターンに入る投資家オーダー(億)。地合いと勢いで大きく変わる
+    const mul = 0.6 + (game.stats.market / 100) * 0.8;
+    let orders = Math.round((battle.rate + battle.momentum * 2) * mul) + imm + ((Math.random()*3) | 0);
+    let critical = false;
+    if (orders > 0 && Math.random() < 0.18) { critical = true; orders = Math.ceil(orders * 1.6); }
     orders = Math.min(battle.remaining, Math.max(0, orders));
     applyStat({ demand: orders });
+
+    // 勢い(モメンタム): 大口が続くと 需要が需要を呼ぶ
+    if (orders >= 12) battle.momentum = Math.min(3, battle.momentum + 1);
+    else if (orders < 6) battle.momentum = 0;
+
     const after = battle.book + orders;
     const remainAfter = Math.max(0, SIZE - after);
-    battle.pending = {
-      amount: orders,
-      pages: pages.concat([[
-        "投資家オーダー +" + orders + "億円",
-        "販売残高 " + remainAfter + "億円"
-      ]])
-    };
+    if (critical) pages = pages.concat([["クリティカル！ 大口オーダー！！", "勢いが ついてきた"]]);
+    pages = pages.concat([[
+      "投資家オーダー +" + orders + "億円",
+      "販売残高 " + remainAfter + "億円"
+    ]]);
+
+    // ターンのおわりに 地合いがゆらぎ、ニュースが飛び込む
+    applyStat({ market: ((Math.random() * 13) | 0) - 6 });
+    const news = rollNews();
+    if (news) { news.fx(); pages = pages.concat([["【ニュース】" + news.label[0], news.label[1]]]); }
+
+    battle.pending = { amount: orders, critical: critical, pages: pages };
   }
 
   function chooseCommand() {
@@ -572,6 +645,7 @@
 
   function toWin() {
     battle.phase = "win";
+    spawnFx(128, 60, 40, ["#facc15","#7dffb0","#fff7d8","#ff9a5c"], 2.6);
     setPages([
       ["販売残高 0億円！", ""],
       ["100億円 完売 ―― 起債 成立！", ""]
@@ -594,6 +668,9 @@
   function drawStage() {
     // 壁: 256x224内で多段色と細線を重ね、SFC風の情報密度を出す
     rect(0, 0, VW, 128, "#20264a");
+    rect(0, 30, VW, 34, "#1d2446");          // 壁の多段階調(上から下へ暗く)
+    rect(0, 64, VW, 30, "#1a2040");
+    rect(0, 94, VW, 24, "#171c3a");
     rect(0, 0, VW, 16, "#161a36");          // 天井帯
     rect(0, 14, VW, 2, "#2c3566");
     rect(0, 16, VW, 1, "#3b4780");
@@ -611,6 +688,16 @@
     text("HOLDINGS", 8, 48, "#9a6b36", 5);
     rect(39, 36, 22, 2, "#6b4624");
     rect(40, 30, 4, 7, "#caa15a"); rect(49, 28, 5, 9, "#facc15"); rect(56, 31, 3, 6, "#8a6232");
+    // 壁かけ時計: 条件決定までの残りターンで 針が進む
+    rect(72, 44, 20, 20, "#0e142b");
+    rect(73, 45, 18, 18, "#e8e6c8");
+    rect(75, 47, 14, 14, "#f4f5f7");
+    rect(81, 47, 2, 2, "#4b5563"); rect(81, 59, 2, 2, "#4b5563");
+    rect(75, 53, 2, 2, "#4b5563"); rect(87, 53, 2, 2, "#4b5563");
+    const clockAng = -Math.PI / 2 + Math.min(1, (battle.turn - 1) / battle.turnLimit) * Math.PI * 2;
+    ctx.strokeStyle = "#991b1b"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(82, 54);
+    ctx.lineTo(82 + Math.cos(clockAng) * 5, 54 + Math.sin(clockAng) * 5); ctx.stroke();
     rect(19, 69, 12, 22, "#2a1a10");
     rect(16, 66, 18, 6, "#f3c46d"); rect(18, 72, 14, 2, "#8a6232");
     rect(22, 91, 6, 12, "#4a2a16"); rect(18, 103, 14, 2, "#2a1a10");
@@ -671,6 +758,26 @@
     ctx.fillStyle = "rgba(248,248,248,0.10)";
     for (let i = 0; i < 4; i++) ctx.fillRect(wx + 12 + i * 28, wy + 2, 2, wh - 4);
 
+    // 地合いで 窓の外の天気が変わる(荒れ模様=雨/くもり=雲/快晴=流れ星)
+    const mood = game.stats.market;
+    if (mood < 40) {
+      for (let i = 0; i < 26; i++) {
+        const rx = wx + 3 + ((i * 11 + ((game.tick * 2) % 10)) % (ww - 6));
+        const ry = wy + 3 + ((i * 23 + game.tick * 4) % (wh - 8));
+        rect(rx, ry, 1, 4, "#3a5a8a");
+      }
+    } else if (mood < 70) {
+      const cdx = wx + ((game.tick >> 2) % (ww + 44)) - 22;
+      if (cdx > wx && cdx + 28 < wx + ww) {
+        rect(cdx, wy + 9, 28, 4, "#141c40");
+        rect(cdx + 6, wy + 6, 17, 3, "#141c40");
+      }
+    } else if ((game.tick % 280) < 20) {
+      const st = game.tick % 280;
+      rect(wx + 8 + st * 4, wy + 6 + st * 1.4, 3, 1, "#fff7d8");
+      rect(wx + 11 + st * 4, wy + 7 + st * 1.4, 2, 1, "#9fd0ff");
+    }
+
     // 観葉植物(左上の空間)
     rect(223, 89, 12, 27, "#3a2a18");          // 鉢
     rect(220, 114, 18, 5, "#241a10");
@@ -722,6 +829,13 @@
     text("100億", 107, 98, "#1e3a8a", 9);
     // ペン
     rect(80, 104, 14, 2, "#111827"); rect(92, 104, 3, 2, C.amber);
+    // ホットコーヒー(徹夜のとも、湯気つき)
+    rect(96, 97, 8, 9, "#2b3a55"); rect(97, 98, 6, 2, "#4a2c16");
+    rect(104, 99, 2, 4, "#2b3a55");
+    for (let i = 0; i < 3; i++) {
+      const sy = 93 - ((game.tick >> 3) + i * 3) % 8;
+      rect(97 + (((game.tick >> 4) + i) % 2) + i * 2, sy, 1, 2, "rgba(220,228,240,0.4)");
+    }
     // 細かい契約書の端
     rect(194, 101, 28, 7, "#f7f0dc"); rect(196, 103, 20, 1, "#9aa6bd"); rect(196, 105, 16, 1, "#9aa6bd");
     // ノートPCとグラフ資料
@@ -838,6 +952,11 @@
       btext("ORDER TICKET", x + 8, y + 6, "#7c2d12", 1);
       btext(battle.ticketName || "INVESTOR", x + 8, y + 14, "#1f2937", 1);
       text("+" + battle.ticketAmount + "億円", x + 8, y + 22, "#1e3a8a", 9);
+      if (battle.ticketCrit) {
+        rect(x + w - 17, y + 3, 14, 14, "#991b1b");
+        rect(x + w - 16, y + 4, 12, 12, "#ef4444");
+        text("大", x + w - 15, y + 6, "#fff7d8", 9);
+      }
       // 着地後しばらく読ませてから、ブック側へ吸収される光のラインを出す。
       if (t > 96) {
         const pulse = (game.tick >> 2) % 2;
@@ -859,6 +978,7 @@
       btext("SOLD OUT", 75, 55, "#fff0a8", 2);
       btext("100 OKU COMPLETE", 72, 72, "#7dffb0", 1);
     }
+    drawFx();
   }
 
   // 販売残高ゲージ(100億円から約定分だけ減る)
@@ -886,6 +1006,11 @@
     rect(x+4, y+4, w-8, h-8, C.win1);
     rect(x+3, y+3, w-6, 1, "#25345f");
     rect(x+3, y+h-4, w-6, 1, "#050815");
+    // 四隅の金の飾り(SFC後期RPG風)
+    rect(x+1, y+1, 3, 1, "#f2d382"); rect(x+1, y+1, 1, 3, "#f2d382");
+    rect(x+w-4, y+1, 3, 1, "#f2d382"); rect(x+w-2, y+1, 1, 3, "#f2d382");
+    rect(x+1, y+h-2, 3, 1, "#f2d382"); rect(x+1, y+h-4, 1, 3, "#f2d382");
+    rect(x+w-4, y+h-2, 3, 1, "#f2d382"); rect(x+w-2, y+h-4, 1, 3, "#f2d382");
     for (let yy = y + 6; yy < y + h - 5; yy += 5) {
       for (let xx = x + 6 + (yy % 2); xx < x + w - 5; xx += 7) {
         rect(xx, yy, 1, 1, "#17203e");
@@ -936,11 +1061,16 @@
     text("FLOW", 172, 165, C.yellow, 8);
     text(battle.rate + "億", 198, 165, C.frame, 8);
     text(arrow, 240, 156, acol, 9);
+    for (let i = 0; i < battle.momentum; i++) rect(222 + i * 5, 167, 3, 3, "#ff9a5c");
+    drawMoodIcon(238, 165, marketMood().type);
 
     // --- 下段: コマンド or メッセージ(全幅) ---
     drawWindow(3, 178, 250, 44);
     if (battle.phase === "command") {
       btext("COMMAND", 12, 184, C.yellow, 1);
+      const mood2 = marketMood();
+      drawMoodIcon(88, 183, mood2.type);
+      text("地合い " + mood2.label + (battle.momentum ? " ／ 勢い+" + battle.momentum : ""), 100, 184, C.gray, 8);
       for (let i = 0; i < COMMANDS.length; i++) {
         const cx = 16 + (i%2)*120;
         const cy = 196 + ((i/2)|0)*13;
@@ -983,12 +1113,20 @@
     rect(186, 31, 28, 2, "#fff0a8"); rect(184, 42, 34, 2, "#e58a43"); rect(180, 50, 42, 2, "#c76536");
     rect(190, 59, 22, 2, "#b75d2e");
     for (let i = 0; i < 7; i++) {
-      const x = 18 + i * 34 + ((game.tick >> 4) % 3);
+      const x = 18 + i * 34 + ((game.tick * (0.06 + i * 0.02)) % 22);
       const y = 30 + (i % 3) * 12;
       rect(x, y, 18, 3, i % 2 ? "#f2b86a" : "#d97842");
       rect(x + 6, y + 4, 24, 2, "#bb5c3f");
       rect(x + 3, y - 2, 12, 1, "#ffd089");
       rect(x + 12, y + 7, 10, 1, "#7d3b38");
+    }
+    // 夕空をわたる鳥の群れ
+    const bfx = ((game.tick * 0.5) % (VW + 80)) - 40;
+    for (let i = 0; i < 3; i++) {
+      const wing = ((game.tick >> 3) + i) % 2;
+      rect(bfx + i * 14, 52 + i * 5 + wing, 2, 1, "#4a1f28");
+      rect(bfx + i * 14 + 2, 52 + i * 5, 2, 1, "#4a1f28");
+      rect(bfx + i * 14 + 4, 52 + i * 5 + wing, 2, 1, "#4a1f28");
     }
     // 霞の横線
     for (let y = 86; y < 138; y += 9) rect((y * 5) % 32, y, 180, 1, "rgba(255,213,139,0.20)");
@@ -1191,6 +1329,13 @@
     rect(52, 67, 2, 2, "#2a1306"); rect(202, 67, 2, 2, "#2a1306");
     text("- THE PRIMARY MARKET -", 62, 74, "#3d220f", 9);
     text("- THE PRIMARY MARKET -", 61, 73, "#fff0a8", 9);
+    // ロゴをなめる光沢スイープ
+    const sweep = (game.tick * 1.6) % 380 - 70;
+    ctx.fillStyle = "rgba(255,246,214,0.18)";
+    for (let i = 0; i < 44; i++) {
+      const sx2 = sweep + i * 1.2, sy2 = 12 + i;
+      if (sx2 > 16 && sx2 < 240 && sy2 < 62) ctx.fillRect(sx2, sy2, 3, 1);
+    }
   }
 
   function drawTitle() {
@@ -1207,7 +1352,7 @@
     if ((game.tick >> 4) % 2 === 0) {
       rect(52, 178, 152, 14, "rgba(20,11,24,0.55)");
       rect(54, 179, 148, 1, "rgba(255,240,168,0.35)");
-      text(IS_TOUCH ? "Ｔ Ａ Ｐ　Ｓ Ｔ Ａ Ｒ Ｔ" : "Ｐ Ｒ Ｅ Ｓ Ｓ　Ｓ Ｔ Ａ Ｒ Ｔ", IS_TOUCH ? 64 : 48, 180, "#fff0a8", 11);
+      text(IS_TOUCH ? "Ｔ Ａ Ｐ　Ｓ Ｔ Ａ Ｒ Ｔ" : "Ｐ Ｒ Ｅ Ｓ Ｓ　Ｓ Ｔ Ａ Ｒ Ｔ", IS_TOUCH ? 64 : 48, 180, ["#fff0a8","#ffd36a","#fff7d8"][(game.tick >> 5) % 3], 11);
     }
     text("(c) SYNDICATE BANK  2026", 64, 204, "#c78958", 9);
   }
@@ -1995,6 +2140,7 @@
   function update() {
     game.tick++;
     game.now = performance.now();
+    updateFx();
 
     if (game.mode === "opening") {
       if (game.now - op.start >= OP_DUR) finishOpening();
@@ -2015,7 +2161,10 @@
     // 各種演出タイマー
     if (battle.screenShake > 0) battle.screenShake--;
     if (battle.dealFlash > 0) battle.dealFlash--;
-    if (battle.ticketT > 0) battle.ticketT--;
+    if (battle.ticketT > 0) {
+      battle.ticketT--;
+      if (battle.ticketT === 30) { spawnFx(162, 100, 12, ["#7dffb0","#fff7d8","#facc15"], 1.4); sfxAbsorb(); }
+    }
 
     // タイプライター送り
     if (["intro","result","win","lose"].includes(battle.phase)) {
@@ -2032,11 +2181,17 @@
         battle.book = Math.min(SIZE, battle.book + amount);
         battle.remaining = Math.max(0, SIZE - battle.book);
         if (amount > 0) {
-          const investors = ["MEIJI AM", "KANTO BK", "SAKURA LIFE", "NORTH FUND", "CENTRAL AM"];
+          const investors = ["MEIJI AM", "KANTO BK", "SAKURA LIFE", "NORTH FUND", "CENTRAL AM", "TOTO PENSION", "YAMATO GAM"];
           battle.ticketName = investors[(battle.turn + amount) % investors.length];
           battle.ticketAmount = amount;
           battle.ticketT = ORDER_TICKET_DURATION;
-          if (amount >= 15) { battle.dealFlash = 4; battle.screenShake = 4; }
+          battle.ticketCrit = !!battle.pending.critical;
+          sfxCoin();
+          if (battle.ticketCrit) {
+            battle.dealFlash = 6; battle.screenShake = 6;
+            spawnFx(90, 56, 24, ["#ffd24a","#fff0a8","#ff9a5c"], 2.2);
+            sfxCrit();
+          } else if (amount >= 15) { battle.dealFlash = 4; battle.screenShake = 4; }
         }
       }
       const resultFrame = battle.pending.amount > 0 ? ORDER_TICKET_DURATION : 48;
@@ -2193,6 +2348,16 @@
     o.connect(g).connect(audio.master || audio.ctx.destination);
     o.start(time); o.stop(time + len);
   }
+  // 短い効果音(約定・クリティカル・ブック吸収)
+  function sfxPlay(notes, step, vol, type) {
+    if (!audio.ctx) return;
+    const t0 = audio.ctx.currentTime + 0.02;
+    for (let i = 0; i < notes.length; i++) blip(notes[i], t0 + i * step, step * 1.5, vol, type);
+  }
+  function sfxCoin()   { sfxPlay(["B5","E6"], 0.07, 0.05, "square"); }
+  function sfxCrit()   { sfxPlay(["C5","E5","G5","C6"], 0.06, 0.05, "square"); }
+  function sfxAbsorb() { sfxPlay(["E6","B5","G5"], 0.05, 0.03, "triangle"); }
+
   function noteAt(seq, i) { return seq[i % seq.length]; }
   function curTrackName() {
     if (game.mode === "battle") return "battle";
