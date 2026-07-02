@@ -1,0 +1,15 @@
+{
+  "name": "スーパーおかいものマスター",
+  "short_name": "おかいもの",
+  "description": "制限時間と予算の中で、かしこく買い物してS評価をめざすスーパーお買い物ゲーム",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#7ec8e8",
+  "theme_color": "#22a559",
+  "icons": [
+    { "src": "assets/app/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "assets/app/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
