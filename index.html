@@ -428,52 +428,115 @@
   ];
 
   // =======================================================================
-  //  ステータス / 戦闘状態
+  //  ステータス / キャンペーン / 戦闘状態
   // =======================================================================
-  const STAT_MAX = { stamina:150, nemawashi:100, review:100, demand:300, trust:100, spread:300, market:100 };
+  const STAT_MAX = { stamina:150, nemawashi:100, review:100, demand:999, trust:100, spread:300, market:100 };
+
+  // キャンペーン: 3つの案件を順にクリアしていく
+  const DEALS = [
+    { name:"30億円 地方インフラ債", enemy:"慎重CFO タートル",
+      size:30, turnLimit:8, baseRate:3, rateCap:8, atk:4, vol:0.30, startSpread:105,
+      intro:[
+        ["30億円 地方インフラ債の マンデート！", ""],
+        ["相手は 慎重CFO タートル。", "堅実に つみあげれば 勝てる。"],
+        ["ロードショーで 需要を育て、", "「勢い」を 切らさないのが コツだ。"]
+      ] },
+    { name:"100億円 シニア社債", enemy:"強気CFO ドラゴン",
+      size:100, turnLimit:10, baseRate:5, rateCap:16, atk:8, vol:0.50, startSpread:115,
+      intro:[
+        ["100億円 シニア社債の マンデート！", ""],
+        ["強気CFO ドラゴンは タイトを要求。", "だが 完売は 必達だ。"],
+        ["条件を動かせば 需要も動く。", "主幹事の腕の 見せどころだ。"]
+      ] },
+    { name:"250億円 グローバル劣後債", enemy:"覇王CFO カイザードラゴン",
+      size:250, turnLimit:13, baseRate:9, rateCap:26, atk:12, vol:0.70, startSpread:135,
+      intro:[
+        ["250億円 グローバル劣後債――", "キャンペーン 最終決戦！"],
+        ["覇王CFO カイザードラゴンが 吠える。", "「生半可な ブックでは 通さんぞ」"],
+        ["市場は 荒れ、要求は 苛烈。", "シ団の 総力で 完売せよ！"]
+      ] }
+  ];
+  const GRADE_ORDER = { S:4, A:3, B:2, C:1 };
 
   const game = {
     tick:0,
-    mode:"title",                  // title -> opening -> battle
+    mode:"title",                  // title -> opening -> select -> battle -> ending
+    dealIndex:0,
+    unlocked:1,                    // 解放済み案件数
+    grades:[null, null, null],     // 案件ごとの最高評価
+    selCursor:0,
     stats:{ stamina:102, nemawashi:36, review:25, demand:70, trust:40, spread:115, market:55 }
   };
 
-  // オープニング(約20秒のSFC風ドット絵ムービー / 時間ベース)
+  function loadProgress() {
+    try {
+      const s = JSON.parse(localStorage.getItem("dsq_progress") || "null");
+      if (s) {
+        game.unlocked = Math.max(1, Math.min(DEALS.length, s.u | 0));
+        if (Array.isArray(s.g)) game.grades = DEALS.map(function (_, i) { return s.g[i] || null; });
+      }
+    } catch (e) {}
+  }
+  function saveProgress() {
+    try { localStorage.setItem("dsq_progress", JSON.stringify({ u: game.unlocked, g: game.grades })); } catch (e) {}
+  }
+  loadProgress();
+
+  // オープニング(約30秒のSFC風ドット絵ムービー / 時間ベース)
   const op = { start: 0 };
   const OP_DUR = 30000;       // ms (30秒)
   const ED_DUR = 15000;       // ms (エンディング15秒)
-  const ending = { start: 0, result: "win", reason: "", grade: "", spread: 0, turns: 0, book: 0 };
+  const ending = { start: 0, result: "win", reason: "", grade: "", gradeLetter: "", dealName: "", size: 100, spread: 0, turns: 0, book: 0 };
 
-  const ENEMY = { name:"100億円 シニア社債" };
-  const SIZE = 100;            // 目標オーダー額(億円)
   const ORDER_TICKET_DURATION = 180; // 約3秒。投資家名と金額を読ませるため長めに見せる。
 
-  // ブックビルディングのコマンド
+  // ブックビルディングのコマンド(3列x2行)
   const COMMANDS = [
-    { id:"widen",     label:"ワイドニング" },   // 需要↑(気力↓)
-    { id:"tighten",   label:"タイトニング" },   // 気力回復(需要↓)
-    { id:"explain",   label:"ロードショー" },
-    { id:"nemawashi", label:"必殺オーダー" }
+    { id:"widen",     label:"ワイド振り" },     // 需要↑(気力↓)
+    { id:"tighten",   label:"タイト寄せ" },     // 気力回復(需要↓)
+    { id:"explain",   label:"ロードショー" },   // 信頼/ゲージ育成
+    { id:"anchor",    label:"アンカー交渉" },   // 大口先行オーダー(クールダウン)
+    { id:"nemawashi", label:"必殺オーダー" },   // ゲージ消費の超大型
+    { id:"scout",     label:"市場調査" }        // 回復+今日の風を先読み
   ];
 
   const battle = {
-    book: 0,                   // 集まったオーダー累計(億)。SIZE到達で完売=勝利
+    deal: DEALS[1], size: 100,
+    book: 0,                   // 集まったオーダー累計(億)。size到達で完売=勝利
     shown: 0,                  // ゲージ表示値(なめらかに増やす)
-    remaining: SIZE,           // 未販売残高。約定のたびに100億円から減る
-    shownRemaining: SIZE,
+    remaining: 100,            // 未販売残高
+    shownRemaining: 100,
     rate: 5,                   // 毎ターンの投資家オーダー額トレンド(億)
     trend: 0,                  // 直近の傾き(+1↑ / -1↓ / 0)
+    momentum: 0,               // 勢い(0-5)。攻めの連打で増え、受注ボーナスに乗る
+    anchorCd: 0,               // アンカー交渉のクールダウン
+    atk: 8,                    // CFOの圧力ダメージ
     turn: 1, turnLimit: 10,
     cursor: 0,
     phase: "intro",            // intro / command / dealAnim / result / win / lose
     pages: [],                 // 表示メッセージ(ページ配列)
     pi: 0, typed: 0,
-    pending: null,             // {amount, pages, after}
+    pending: null,             // {amount, pages, noTurn}
     animT: 0, animHit: false,
-    screenShake: 0, dealFlash: 0,
+    screenShake: 0, dealFlash: 0, hurtFlash: 0,
     ticketT: 0, ticketAmount: 0, ticketName: "",
+    nextEvent: null,           // このターンの終わりに起きるマーケットイベント
+    forecastShown: false,      // 市場調査で先読み済みか
+    enraged: false,            // 最終ボスの怒りフェーズ
     next: null
   };
+
+  // フローティングテキスト / パーティクル
+  const fxTexts = [];
+  const fxParts = [];
+  function addFxText(x, y, str, color) { fxTexts.push({ x:x, y:y, vy:-0.42, t:52, text:str, color:color }); }
+  function burstParts(x, y, n) {
+    const cols = ["#facc15", "#7dffb0", "#60a5fa", "#f8f8f8", "#f59e0b"];
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2, sp = 0.6 + Math.random() * 1.6;
+      fxParts.push({ x:x, y:y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp - 0.6, t:26 + (Math.random()*18|0), color:cols[i % cols.length] });
+    }
+  }
 
   function setPages(pages, next) { battle.pages = pages; battle.pi = 0; battle.typed = 0; battle.next = next || null; }
   function curPage() { return battle.pages[battle.pi] || ["", ""]; }
@@ -486,50 +549,118 @@
     }
   }
 
-  function startBattle() {
+  // ------------------------------------------------ マーケットイベント
+  const EVENTS = [
+    { id:"rateup", name:"金利急騰", bad:true,
+      apply:function (d) { battle.rate = Math.max(0, battle.rate - 3); battle.trend = -1; },
+      pages:[["マーケット: 金利が 急騰した！", ""], ["投資家が 様子見に……", "需要トレンド ↓"]] },
+    { id:"inflow", name:"資金流入", bad:false,
+      apply:function (d) { battle.rate = Math.min(d.rateCap, battle.rate + 3); battle.trend = 1; },
+      pages:[["マーケット: 大口資金が 流入！", ""], ["需要トレンド ↑", ""]] },
+    { id:"rival", name:"ライバル起債", bad:true,
+      apply:function (d) { battle.rate = Math.max(0, battle.rate - 2); battle.momentum = Math.max(0, battle.momentum - 1); },
+      pages:[["ライバル案件が 同日に 起債！", ""], ["投資家の 財布のひもが かたい……", "需要トレンド ↓ ／ 勢い -1"]] },
+    { id:"upgrade", name:"格上げ観測", bad:false,
+      apply:function (d) { applyStat({ trust:8 }); },
+      pages:[["格上げ観測が ながれた！", ""], ["発行体信頼 +8", ""]] },
+    { id:"riskoff", name:"リスクオフ", bad:true,
+      apply:function (d) { applyStat({ stamina:-6 }); battle.rate = Math.max(0, battle.rate - 2); battle.hurtFlash = 5; },
+      pages:[["リスクオフの 嵐が ふきあれる！", ""], ["気力 -6 ／ 需要トレンド ↓", ""]] },
+    { id:"tail", name:"追い風", bad:false,
+      apply:function (d) { battle.momentum = Math.min(5, battle.momentum + 1); battle.rate = Math.min(d.rateCap, battle.rate + 1); },
+      pages:[["市場に 追い風が ふいた！", ""], ["勢い +1 ／ 需要トレンド ↑", ""]] },
+    { id:"cfoPress", name:"CFOの圧力", bad:true, cfo:true,
+      apply:function (d) { applyStat({ stamina:-battle.atk }); battle.screenShake = 8; battle.hurtFlash = 6; },
+      pages:null },
+    { id:"cfoTight", name:"タイト要求", bad:true, cfo:true,
+      apply:function (d) { applyStat({ spread:-6 }); battle.rate = Math.max(0, battle.rate - 2); },
+      pages:[["CFO 「もっと タイトに できるだろう」", ""], ["スプレッド -6bp ／ 需要トレンド ↓", ""]] }
+  ];
+
+  function rollEvent() {
+    const d = battle.deal;
+    const chance = d.vol + (battle.enraged ? 0.15 : 0);
+    if (Math.random() > chance) return null;   // 無風
+    const pool = [];
+    for (let i = 0; i < EVENTS.length; i++) {
+      const ev = EVENTS[i];
+      const w = ev.cfo ? (battle.enraged ? 5 : 2) : ev.bad ? 3 : 2;
+      for (let j = 0; j < w; j++) pool.push(ev);
+    }
+    return pool[(Math.random() * pool.length) | 0];
+  }
+
+  function startDeal(idx) {
+    game.dealIndex = idx;
+    const d = DEALS[idx];
+    battle.deal = d; battle.size = d.size;
     battle.book = 0; battle.shown = 0;
-    battle.remaining = SIZE; battle.shownRemaining = SIZE;
-    battle.rate = 5; battle.trend = 0; battle.turn = 1;
+    battle.remaining = d.size; battle.shownRemaining = d.size;
+    battle.rate = d.baseRate; battle.trend = 0;
+    battle.momentum = 0; battle.anchorCd = 0; battle.atk = d.atk;
+    battle.turn = 1; battle.turnLimit = d.turnLimit;
     battle.cursor = 0; battle.phase = "intro";
     battle.pending = null; battle.animT = 0; battle.animHit = false;
-    battle.screenShake = 0; battle.dealFlash = 0;
+    battle.screenShake = 0; battle.dealFlash = 0; battle.hurtFlash = 0;
     battle.ticketT = 0; battle.ticketAmount = 0; battle.ticketName = "";
-    game.stats = { stamina:102, nemawashi:20, review:25, demand:0, trust:40, spread:115, market:55 };
-    setPages([
-      ["100億円 シニア社債の マンデート！", ""],
-      ["販売残高は 100億円。", "投資家オーダーで 完売をめざせ。"],
-      ["条件を動かせば 需要も動く。", "主幹事の腕の 見せどころだ。"]
-    ], toCommand);
+    battle.nextEvent = null; battle.forecastShown = false; battle.enraged = false;
+    fxTexts.length = 0; fxParts.length = 0;
+    game.stats = { stamina:120, nemawashi:20, review:25, demand:0, trust:40, spread:d.startSpread, market:55 };
+    game.mode = "battle";
+    setPages(d.intro.map(function (p) { return p.slice(); }), toCommand);
   }
   function toCommand() {
+    battle.nextEvent = rollEvent();      // ターン頭に風を先決め(市場調査で読める)
+    battle.forecastShown = false;
     battle.phase = "command";
     setPages([["コマンドを えらべ。", ""]], null);
   }
 
   // -------------------------------------------------- コマンド(ブックビルディング)
+  function momentumBonus() { return battle.momentum; }   // 勢い1につき +1億
+
   function resolveCommand(id) {
+    const d = battle.deal;
     applyStat({ stamina:-2 });          // 1ターンの基礎消耗(時間経過)
     let imm = 0;                        // このターンの追加オーダー(億)
     let pages = [];
+    let aggressive = false;             // 攻めの手か(勢いが乗る)
+    let crit = false;
 
     if (id === "widen") {
       applyStat({ stamina:-9, spread:5, nemawashi:4 });
-      battle.rate = Math.min(16, battle.rate + 3);
-      battle.trend = 1;
+      battle.rate = Math.min(d.rateCap, battle.rate + 3);
+      battle.trend = 1; aggressive = true;
       pages = [["スプレッドを ワイドに 振った！", ""],
                ["気力 -9 ／ 必殺ゲージ +4", "需要トレンド ↑"]];
     } else if (id === "tighten") {
       applyStat({ stamina:11, spread:-5, nemawashi:2 });
       battle.rate = Math.max(0, battle.rate - 3);
       battle.trend = -1;
+      battle.momentum = Math.max(0, battle.momentum - 1);
       pages = [["スプレッドを タイトに 寄せた", ""],
-               ["気力 回復 ／ 必殺ゲージ +2", "需要トレンド ↓"]];
+               ["気力 回復 ／ 必殺ゲージ +2", "需要トレンド ↓ ／ 勢い -1"]];
     } else if (id === "explain") {
       applyStat({ stamina:-3, trust:4, nemawashi:12 });
-      battle.rate = Math.min(16, battle.rate + 1);
-      battle.trend = 1; imm = 2;
+      battle.rate = Math.min(d.rateCap, battle.rate + 1);
+      battle.trend = 1; imm = 2; aggressive = true;
+      // 信頼が高いほどロードショーの説得が刺さる
+      if (game.stats.trust >= 60) { imm += 3; }
       pages = [["ロードショーで 投資家を 口説いた", ""],
-               ["発行体信頼と 必殺ゲージが あがった", ""]];
+               ["発行体信頼と 必殺ゲージが あがった", game.stats.trust >= 60 ? "高い信頼で 需要 上乗せ！" : ""]];
+    } else if (id === "anchor") {
+      if (battle.anchorCd > 0) {
+        applyStat({ stamina:2 });
+        battle.pending = { amount:0, noTurn:true,
+          pages:[["アンカー投資家は 検討中……", "あと " + battle.anchorCd + "ターン まて。"]] };
+        return;
+      }
+      applyStat({ stamina:-12, trust:2 });
+      battle.anchorCd = 3;
+      aggressive = true;
+      imm = 8 + Math.round(game.stats.trust / 10);   // 信頼が高いほど大口
+      pages = [["アンカー投資家と 直談判！", ""],
+               ["大口の 先行オーダーを 確保した", "(信頼が高いほど 大きい)"]];
     } else if (id === "nemawashi") {
       if (game.stats.nemawashi < 35) {
         applyStat({ stamina:2 });
@@ -537,21 +668,44 @@
           pages:[["必殺オーダーには", "必殺ゲージが たりない！"]] };
         return;
       }
-      applyStat({ stamina:-22, nemawashi:-35 });
-      battle.trend = 0; imm = 28;
-      pages = [["必殺オーダーを たたき込んだ！", ""],
-               ["大型オーダー！ 気力とゲージを消費", ""]];
+      const full = game.stats.nemawashi >= 100;
+      applyStat({ stamina:-22, nemawashi:full ? -100 : -35 });
+      battle.trend = 0; aggressive = true;
+      imm = full ? 55 : 28;
+      if (full) { crit = true; }
+      pages = full
+        ? [["ゲージ最大―― 超必殺オーダー！！", ""],
+           ["伝説の 超大口が うごいた！", ""]]
+        : [["必殺オーダーを たたき込んだ！", ""],
+           ["大型オーダー！ 気力とゲージを消費", ""]];
+    } else if (id === "scout") {
+      applyStat({ stamina:6, nemawashi:3, market:5 });
+      const ev = battle.nextEvent;
+      battle.forecastShown = true;
+      const fc = ev ? ("今日の風: 「" + ev.name + "」の 気配……") : "今日の風: おだやかだ。";
+      battle.pending = { amount:0, noTurn:true,
+        pages:[["セカンダリー市場を 調査した", ""], [fc, "気力 +6 ／ 必殺ゲージ +3"]] };
+      return;
     }
 
+    // 勢いの更新: 攻めの手は勢いを積む
+    if (aggressive) battle.momentum = Math.min(5, battle.momentum + 1);
+
+    // クリティカル判定(市場感応度が高いと出やすい)
+    if (!crit && aggressive && Math.random() < 0.08 + game.stats.market / 500) crit = true;
+
     // このターンに入る投資家オーダー(億)
-    let orders = battle.rate + imm + ((Math.random()*3) | 0);
+    let orders = battle.rate + imm + momentumBonus() + ((Math.random()*3) | 0);
+    if (crit) orders = Math.round(orders * 1.5);
     orders = Math.min(battle.remaining, Math.max(0, orders));
     applyStat({ demand: orders });
     const after = battle.book + orders;
-    const remainAfter = Math.max(0, SIZE - after);
+    const remainAfter = Math.max(0, battle.size - after);
+    const extra = [];
+    if (crit) extra.push(["会心の セールス！！ オーダー 1.5倍！", ""]);
     battle.pending = {
-      amount: orders,
-      pages: pages.concat([[
+      amount: orders, crit: crit,
+      pages: pages.concat(extra).concat([[
         "投資家オーダー +" + orders + "億円",
         "販売残高 " + remainAfter + "億円"
       ]])
@@ -560,9 +714,13 @@
 
   function chooseCommand() {
     resolveCommand(COMMANDS[battle.cursor].id);
+    sfx(battle.pending && battle.pending.noTurn ? "cancel" : "confirm");
     if (battle.pending && battle.pending.noTurn) {
       battle.phase = "result";
-      setPages(battle.pending.pages, function () { toCommand(); });
+      setPages(battle.pending.pages, function () {
+        battle.phase = "command";
+        setPages([["コマンドを えらべ。", ""]], null);
+      });
       battle.pending = null;
       return;
     }
@@ -570,11 +728,27 @@
     battle.animT = 0; battle.animHit = false;
   }
 
+  // ターン終わりのマーケットイベント処理。ページ配列を返す(無風ならnull)。
+  function consumeEvent() {
+    const ev = battle.nextEvent;
+    battle.nextEvent = null;
+    if (!ev) return null;
+    ev.apply(battle.deal);
+    sfx(ev.bad ? "hurt" : "good");
+    if (ev.id === "cfoPress") {
+      addFxText(64, 60, "-" + battle.atk, "#ff6b6b");
+      return [[battle.deal.enemy + "の 圧力！", "「その条件で 通ると思うな」"],
+              ["気力 -" + battle.atk + " の ダメージ！", ""]];
+    }
+    return ev.pages.map(function (p) { return p.slice(); });
+  }
+
   function toWin() {
     battle.phase = "win";
+    sfx("fanfare");
     setPages([
       ["販売残高 0億円！", ""],
-      ["100億円 完売 ―― 起債 成立！", ""]
+      [battle.size + "億円 完売 ―― 起債 成立！", ""]
     ], function () { startEnding("win"); });
   }
   function toLose(reason) {
@@ -785,8 +959,17 @@
     const ex = 40 + (cfoFrame === 1 ? 1 : cfoFrame === 3 ? -1 : 0);
     const ey = 36 + (cfoFrame === 2 ? 1 : 0);
     drawShadow(64, 103, 46);
-    drawArt(SPR_CFO, ex, ey, P, 2);
-    drawCfoFineDetails(ex, ey);
+    const enrageTint = battle.enraged && (game.tick >> 3) % 6 === 0 ? "#b02030" : null;
+    drawArt(SPR_CFO, ex, ey, P, 2, enrageTint);
+    if (!enrageTint) drawCfoFineDetails(ex, ey);
+    if (battle.enraged) {
+      // 怒りのオーラ
+      for (let i = 0; i < 6; i++) {
+        const ax = ex + 6 + ((i * 13 + (game.tick * 2)) % 40);
+        const ay = ey + 62 - ((game.tick * 2 + i * 17) % 58);
+        rect(ax, ay, 2, 3, i % 2 ? "#ef4444" : "#f59e0b");
+      }
+    }
     // CFOの手元: 書類確認と小さな頷き
     if (cfoFrame === 2) rect(ex + 6, ey + 58, 9, 2, "#eef2f7");
 
@@ -818,6 +1001,16 @@
     ctx.fillText(str, x, y);
   }
   function drawEffects() {
+    // パーティクル / フローティングテキスト
+    for (let i = fxParts.length - 1; i >= 0; i--) {
+      const p = fxParts[i];
+      rect(p.x, p.y, 2, 2, p.color);
+    }
+    for (let i = fxTexts.length - 1; i >= 0; i--) {
+      const f = fxTexts[i];
+      const a = Math.min(1, f.t / 18);
+      if (a > 0.2) drawNumber(f.text, f.x, f.y, f.color);
+    }
     if (battle.ticketT > 0) {
       const total = ORDER_TICKET_DURATION;
       const t = total - battle.ticketT;
@@ -849,7 +1042,15 @@
       }
     }
     if (battle.dealFlash > 0) {
-      ctx.fillStyle = "rgba(255,240,168,0.30)";
+      ctx.fillStyle = battle.critFlash ? "rgba(255,180,80,0.38)" : "rgba(255,240,168,0.30)";
+      ctx.fillRect(0, 0, VW, 128);
+    }
+    if (battle.hurtFlash > 0) {
+      ctx.fillStyle = "rgba(239,68,68,0.22)";
+      ctx.fillRect(0, 0, VW, 128);
+    }
+    if (battle.enraged && (game.tick >> 3) % 4 === 0) {
+      ctx.fillStyle = "rgba(220,38,38,0.07)";
       ctx.fillRect(0, 0, VW, 128);
     }
     if (battle.phase === "win") {
@@ -857,23 +1058,23 @@
       rect(52, 47, 152, 34, "#caa15a");
       rect(54, 49, 148, 30, "#0a0e22");
       btext("SOLD OUT", 75, 55, "#fff0a8", 2);
-      btext("100 OKU COMPLETE", 72, 72, "#7dffb0", 1);
+      btext(battle.size + " OKU COMPLETE", 72, 72, "#7dffb0", 1);
     }
   }
 
-  // 販売残高ゲージ(100億円から約定分だけ減る)
+  // 販売残高ゲージ(案件サイズから約定分だけ減る)
   function drawDealHeader() {
     drawWindow(32, 4, 192, 36);
-    btext("PRIMARY BOOK", 42, 9, "#fff0a8", 1);
+    btext(battle.enraged ? "FINAL PHASE" : "PRIMARY BOOK", 42, 9, battle.enraged ? "#ff6b6b" : "#fff0a8", 1);
     text("販売残高", 42, 20, C.gray, 8);
-    text(Math.ceil(battle.shownRemaining) + "億円", 157, 16, battle.remaining <= 20 ? C.red : C.frame, 14);
+    text(Math.ceil(battle.shownRemaining) + "億円", 157, 16, battle.remaining <= battle.size * 0.2 ? C.red : C.frame, 14);
     const bx = 84, by = 30, bw = 118, bh = 5;
     rect(bx-1, by-1, bw+2, bh+2, "#caa15a");
     rect(bx, by, bw, bh, "#14213a");
-    const remainRatio = Math.max(0, battle.shownRemaining / SIZE);
+    const remainRatio = Math.max(0, battle.shownRemaining / battle.size);
     rect(bx, by, Math.round(bw * remainRatio), bh, remainRatio < .25 ? C.red : "#e5a43a");
     rect(bx, by, Math.round(bw * remainRatio), 1, "rgba(255,255,255,0.45)");
-    btext("100 OKU", 42, 30, "#9ca3af", 1);
+    btext(battle.size + " OKU", 42, 30, "#9ca3af", 1);
   }
 
   // =======================================================================
@@ -919,20 +1120,28 @@
     btext("LEAD DESK", 46, 134, C.yellow, 1);
     text("気力", 46, 145, C.gray, 8); text(game.stats.stamina + "/150", 65, 145, C.frame, 8);
     miniGauge(100, 147, 22, game.stats.stamina / 150, game.stats.stamina<30 ? C.red : C.green);
-    text("必殺", 46, 155, C.gray, 8); text(game.stats.nemawashi + "/100", 65, 155, C.frame, 8);
-    miniGauge(100, 157, 22, game.stats.nemawashi / 100, C.blue);
-    text("DAY", 46, 165, C.yellow, 8); text(battle.turn + "/" + battle.turnLimit, 70, 165, battle.turn>battle.turnLimit-3 ? C.red : C.frame, 8);
+    text("必殺", 46, 155, C.gray, 8); text(game.stats.nemawashi + "/100", 65, 155, game.stats.nemawashi >= 100 ? C.amber : C.frame, 8);
+    miniGauge(100, 157, 22, game.stats.nemawashi / 100, game.stats.nemawashi >= 100 ? C.amber : C.blue);
+    // 勢いピップ(攻めの手の連打でオーダーが上乗せ)
+    text("勢い", 46, 165, C.gray, 8);
+    for (let i = 0; i < 5; i++) {
+      const on = i < battle.momentum;
+      rect(68 + i * 8, 166, 6, 6, on ? (battle.momentum >= 4 ? "#f59e0b" : "#facc15") : "#263044");
+      if (on) rect(68 + i * 8, 166, 6, 1, "#fff0a8");
+    }
+    if (battle.anchorCd > 0) text("錨" + battle.anchorCd, 112, 165, C.gray, 8);
 
     // 案件(オーダー集計)
     drawWindow(129, 130, 124, 46);
     drawFace(FACE_CFO, 134, 137);
     btext("BOOK", 172, 134, C.yellow, 1);
-    text("残額", 172, 145, C.gray, 8); text(Math.ceil(battle.shownRemaining) + "億", 194, 145, battle.remaining<=20 ? C.red : C.frame, 8);
-    miniGauge(224, 147, 22, battle.shownRemaining / SIZE, battle.remaining<=20 ? C.red : C.amber);
+    const lowRemain = battle.remaining <= battle.size * 0.2;
+    text("残額", 172, 145, C.gray, 8); text(Math.ceil(battle.shownRemaining) + "億", 194, 145, lowRemain ? C.red : C.frame, 8);
+    miniGauge(224, 147, 22, battle.shownRemaining / battle.size, lowRemain ? C.red : C.amber);
     const arrow = battle.trend > 0 ? "↑" : battle.trend < 0 ? "↓" : "→";
     const acol = battle.trend > 0 ? C.green : battle.trend < 0 ? C.red : C.frame;
-    text("受注", 172, 155, C.gray, 8); text(Math.floor(battle.shown) + "/" + SIZE, 194, 155, C.frame, 8);
-    miniGauge(224, 157, 22, battle.shown / SIZE, C.blue);
+    text("受注", 172, 155, C.gray, 8); text(Math.floor(battle.shown) + "/" + battle.size, 194, 155, C.frame, 8);
+    miniGauge(224, 157, 22, battle.shown / battle.size, C.blue);
     text("FLOW", 172, 165, C.yellow, 8);
     text(battle.rate + "億", 198, 165, C.frame, 8);
     text(arrow, 240, 156, acol, 9);
@@ -941,12 +1150,22 @@
     drawWindow(3, 178, 250, 44);
     if (battle.phase === "command") {
       btext("COMMAND", 12, 184, C.yellow, 1);
+      // 市場調査の予兆(中央)
+      if (battle.forecastShown) {
+        const ev = battle.nextEvent;
+        text(ev ? "予兆「" + ev.name + "」" : "予兆:無風", 76, 183, ev && ev.bad ? "#ff9f9f" : "#9ff0c0", 8);
+      }
+      btext("DAY " + battle.turn + "/" + battle.turnLimit, 190, 184, battle.turn > battle.turnLimit - 3 ? "#ff6b6b" : "#9ca3af", 1);
       for (let i = 0; i < COMMANDS.length; i++) {
-        const cx = 16 + (i%2)*120;
-        const cy = 196 + ((i/2)|0)*13;
+        const cx = 18 + (i%3)*82;
+        const cy = 196 + ((i/3)|0)*13;
         const sel = i === battle.cursor;
+        let col = sel ? C.yellow : C.frame;
+        if (COMMANDS[i].id === "nemawashi" && game.stats.nemawashi >= 100) col = sel ? "#ffd24a" : "#f59e0b";
+        if (COMMANDS[i].id === "nemawashi" && game.stats.nemawashi < 35) col = sel ? "#8f9bb8" : C.dgray;
+        if (COMMANDS[i].id === "anchor" && battle.anchorCd > 0) col = sel ? "#8f9bb8" : C.dgray;
         if (sel && (game.tick>>3)%2 === 0) text("▶", cx-10, cy, C.yellow, 10);
-        text(COMMANDS[i].label, cx, cy, sel ? C.yellow : C.frame, 10);
+        text(COMMANDS[i].label, cx, cy, col, 10);
       }
     } else {
       const p = curPage();
@@ -1759,11 +1978,28 @@
   function startEnding(result) {
     ending.start = performance.now();
     ending.result = result || "win";
+    const d = battle.deal;
     const sp = game.stats.spread;
-    ending.grade = sp <= 110 ? "S  会心の起債！タイトに決めた"
-                 : sp <= 125 ? "A  手堅い 完売"
-                 :             "B  ワイドだが 完売は 完売";
+    const spare = battle.turnLimit - battle.turn;     // 残した日数
+    let letter;
+    if (sp <= d.startSpread - 8 && spare >= 2) letter = "S";
+    else if (sp <= d.startSpread + 2) letter = "A";
+    else if (sp <= d.startSpread + 15) letter = "B";
+    else letter = "C";
+    ending.gradeLetter = letter;
+    ending.grade = letter === "S" ? "S  会心の起債！タイトに決めた"
+                 : letter === "A" ? "A  手堅い 完売"
+                 : letter === "B" ? "B  ワイドだが 完売は 完売"
+                 :                  "C  かなり ワイドに ついた";
+    ending.dealName = d.name; ending.size = battle.size;
     ending.spread = sp; ending.turns = battle.turn; ending.book = battle.book;
+    if (ending.result === "win") {
+      // 進行度と最高評価を保存
+      if (game.dealIndex + 1 >= game.unlocked) game.unlocked = Math.min(DEALS.length, game.dealIndex + 2);
+      const prev = game.grades[game.dealIndex];
+      if (!prev || (GRADE_ORDER[letter] || 0) > (GRADE_ORDER[prev] || 0)) game.grades[game.dealIndex] = letter;
+      saveProgress();
+    }
     game.mode = "ending";
   }
 
@@ -1797,7 +2033,7 @@
       }
       hwindow(166, 166, 438, 118);
       htext("完売 御礼！", 274, 196, "#facc15", 48);
-      hcaption("販売残高はゼロ。ブックは100億円に到達した。", "主幹事の判断が、起債を成立へ押し込んだ。");
+      hcaption("販売残高はゼロ。ブックは" + ending.size + "億円に到達した。", "主幹事の判断が、起債を成立へ押し込んだ。");
     } else if (e < 7.6) {
       const t = e - 3.8;
       hrect(0, 0, HIW, HIH, "#0a0e26"); htwinkle(HIH, 90, 14);
@@ -1807,7 +2043,7 @@
       hrect(272, cy, 224, 148, "#efe7cf"); hrect(272, cy, 224, 14, "#caa15a"); hrect(272, cy + 134, 224, 14, "#9a6b36");
       htext("起債", 338, cy + 36, "#1f2937", 42); htext("成立", 338, cy + 84, "#1f2937", 42);
       hrect(318, cy + 120, 132, 12, "#dc2626");
-      hcaption("証書が光の柱を昇る。", "100億円のシニア社債は、市場へ送り出された。");
+      hcaption("証書が光の柱を昇る。", ending.dealName + "は、市場へ送り出された。");
     } else if (e < 11.4) {
       hrect(0, 0, HIW, HIH, "#1a2548");
       hrect(0, 0, HIW, 58, "#10162e");
@@ -1820,12 +2056,17 @@
     } else {
       hrect(0, 0, HIW, HIH, "#0a0e26"); htwinkle(HIH, 120, 20);
       htext("― 起債 実現 ―", 238, 80, "#facc15", 42);
-      hwindow(154, 168, 460, 250);
-      htext("完売額", 210, 212, C.gray, 26); htext(ending.book + " 億円", 420, 212, C.frame, 26);
-      htext("スプレッド", 210, 262, C.gray, 26); htext(ending.spread + " bp", 420, 262, C.frame, 26);
-      htext("所要ターン", 210, 312, C.gray, 26); htext(ending.turns + " ターン", 420, 312, C.frame, 26);
-      htext("評価", 210, 362, C.gray, 26); htext(ending.grade, 300, 362, "#22c55e", 24);
-      htext("主幹事の勇者  ……  あなた", 214, 462, C.gray, 24);
+      htext(ending.dealName, 384 - ending.dealName.length * 13, 132, "#aab4d4", 26);
+      hwindow(154, 178, 460, 250);
+      htext("完売額", 210, 218, C.gray, 26); htext(ending.book + " 億円", 420, 218, C.frame, 26);
+      htext("スプレッド", 210, 268, C.gray, 26); htext(ending.spread + " bp", 420, 268, C.frame, 26);
+      htext("所要ターン", 210, 318, C.gray, 26); htext(ending.turns + " ターン", 420, 318, C.frame, 26);
+      htext("評価", 210, 368, C.gray, 26); htext(ending.grade, 300, 368, ending.gradeLetter === "S" ? "#facc15" : "#22c55e", 24);
+      if (game.dealIndex < DEALS.length - 1) {
+        htext("次の案件 「" + DEALS[game.dealIndex + 1].name + "」 が 解放！", 130, 462, "#7dffb0", 24);
+      } else {
+        htext("全案件 制覇！ 伝説の主幹事となった――", 158, 462, "#facc15", 24);
+      }
       if ((game.tick >> 4) % 2 === 0) htext("F I N", 342, 538, C.frame, 42);
     }
   }
@@ -1869,7 +2110,7 @@
       hwindow(154, 168, 460, 250);
       const why = ending.reason === "time" ? "条件決定の機をのがした" : "気力がつきはてた";
       htext("事由", 210, 220, C.gray, 26); htext(why, 300, 220, C.frame, 24);
-      htext("集めたオーダー", 210, 278, C.gray, 26); htext(ending.book + " / " + SIZE + " 億円", 420, 278, C.frame, 26);
+      htext("集めたオーダー", 210, 278, C.gray, 26); htext(ending.book + " / " + ending.size + " 億円", 420, 278, C.frame, 26);
       htext("所要ターン", 210, 336, C.gray, 26); htext(ending.turns + " ターン", 420, 336, C.frame, 26);
       htext("だが勇者の挑戦は終わらない。", 196, 462, C.gray, 24);
       if ((game.tick >> 4) % 2 === 0) htext("T O   B E   C O N T I N U E D", 126, 538, C.frame, 34);
@@ -1881,12 +2122,68 @@
     hrect(0, 0, HIW, HIH, C.black);
     if (ending.result === "lose") drawEndingLose(e);
     else drawEndingWin(e);
-    // 15秒演出後に停止し、入力でタイトルへ(勝手に進まない)
+    // 15秒演出後に停止し、入力で案件選択へ(勝手に進まない)
     if (e >= ED_DUR / 1000) {
-      htext("ENTER で タイトルへ", 250, 596, C.gray, 24);
+      htext("ENTER で 案件選択へ", 250, 596, C.gray, 24);
     } else if ((game.tick >> 4) % 2 === 0) {
       htext("ENTER:SKIP", 594, 548, C.gray, 22);
     }
+  }
+
+  // =======================================================================
+  //  描画: 案件選択(キャンペーンマップ)
+  // =======================================================================
+  function drawSelect() {
+    rect(0, 0, VW, VH, "#0a0e22");
+    // 背景: 夜の金融街
+    nightBands(0);
+    twinkle(64, 30);
+    bigMoon(224, 22, 12);
+    skyline(96, 22, 52, "#141d44", "#facc15", (game.tick / 6) | 0, 24, 9);
+    rect(0, 96, VW, VH - 96, "#070a1a");
+
+    btext("SELECT YOUR DEAL", 62, 8, "#fff0a8", 2);
+    text("案件を えらんで 起債せよ", 74, 22, C.gray, 9);
+
+    for (let i = 0; i < DEALS.length; i++) {
+      const d = DEALS[i];
+      const y = 38 + i * 52;
+      const locked = i >= game.unlocked;
+      const sel = i === game.selCursor;
+      drawWindow(10, y, 236, 48);
+      if (sel) {
+        rect(12, y + 2, 232, 2, (game.tick >> 3) % 2 ? "#facc15" : "#fff0a8");
+        rect(12, y + 44, 232, 2, "#7c2d12");
+        if ((game.tick >> 3) % 2 === 0) text("▶", 16, y + 18, C.yellow, 11);
+      }
+      if (locked) {
+        text("？？？？？？？？？？", 46, y + 9, C.dgray, 10);
+        text("前の案件を クリアで 解放", 46, y + 24, "#3d4763", 9);
+        // 錠前
+        rect(216, y + 14, 14, 12, "#374151"); rect(219, y + 8, 8, 8, "#4b5563");
+        rect(221, y + 10, 4, 4, "#0a0e22"); rect(222, y + 18, 2, 5, "#0a0e22");
+        continue;
+      }
+      text(d.name, 30, y + 8, sel ? C.yellow : C.frame, 10);
+      text("VS " + d.enemy, 30, y + 21, "#9fb0d8", 8);
+      text(d.size + "億円 ／ " + d.turnLimit + "日", 30, y + 33, C.gray, 8);
+      // 難度星
+      for (let s = 0; s <= i; s++) rect(150 + s * 8, y + 35, 5, 5, "#f59e0b");
+      // クリア評価バッジ
+      const g = game.grades[i];
+      if (g) {
+        rect(210, y + 8, 22, 22, "#1c2748");
+        rect(211, y + 9, 20, 20, g === "S" ? "#7c5a10" : "#14324a");
+        text(g, 217, y + 12, g === "S" ? "#facc15" : "#7dffb0", 14);
+        btext("BEST", 208, y + 32, "#9ca3af", 1);
+      } else {
+        btext("NEW", 212, y + 12, (game.tick >> 4) % 2 ? "#ff6b6b" : "#ffb0b0", 1);
+      }
+    }
+    // 歩く勇者
+    const wob = (game.tick >> 4) % 2;
+    drawArt(SPR_HERO, 4, 196 + wob, P, 1);
+    if ((game.tick >> 4) % 2 === 0) text(IS_TOUCH ? "タップで 決定" : "ENTER で 決定", 84, 204, C.frame, 9);
   }
 
   // =======================================================================
@@ -1953,11 +2250,11 @@
     }
     if (battle.phase === "command") {
       const i = battle.cursor;
-      const x = (16 + (i % 2) * 120) * s;
-      const y = (196 + ((i / 2) | 0) * 13) * s;
-      hrect(x - 18, y - 8, 314, 38, "rgba(250,204,21,0.14)");
-      hrect(x - 18, y - 8, 314, 3, "#facc15");
-      hrect(x - 18, y + 27, 314, 3, "#7c2d12");
+      const x = (18 + (i % 3) * 82) * s;
+      const y = (196 + ((i / 3) | 0) * 13) * s;
+      hrect(x - 18, y - 6, 232, 36, "rgba(250,204,21,0.14)");
+      hrect(x - 18, y - 6, 232, 3, "#facc15");
+      hrect(x - 18, y + 27, 232, 3, "#7c2d12");
     }
   }
 
@@ -1981,6 +2278,7 @@
     } else {
       useBasePixels();
       if (game.mode === "title") drawTitle();
+      else if (game.mode === "select") drawSelect();
       else {
         drawBattleScreen();
         useHighPixels();
@@ -2004,22 +2302,36 @@
       // 自動では進めない。最後の画面で停止し、ENTER/クリックでタイトルへ。
       return;
     }
-    if (game.mode === "title") return;
+    if (game.mode === "title" || game.mode === "select") return;
 
     // ゲージのなめらか減少
-    if (battle.shown < battle.book) battle.shown = Math.min(battle.book, battle.shown + 1.8);
+    const gaugeSpeed = Math.max(1.8, battle.size / 55);
+    if (battle.shown < battle.book) battle.shown = Math.min(battle.book, battle.shown + gaugeSpeed);
     else if (battle.shown > battle.book) battle.shown = battle.book;
-    if (battle.shownRemaining > battle.remaining) battle.shownRemaining = Math.max(battle.remaining, battle.shownRemaining - 1.8);
+    if (battle.shownRemaining > battle.remaining) battle.shownRemaining = Math.max(battle.remaining, battle.shownRemaining - gaugeSpeed);
     else if (battle.shownRemaining < battle.remaining) battle.shownRemaining = battle.remaining;
 
     // 各種演出タイマー
     if (battle.screenShake > 0) battle.screenShake--;
     if (battle.dealFlash > 0) battle.dealFlash--;
+    if (battle.hurtFlash > 0) battle.hurtFlash--;
     if (battle.ticketT > 0) battle.ticketT--;
+
+    // パーティクル / フローティングテキストの物理
+    for (let i = fxParts.length - 1; i >= 0; i--) {
+      const p = fxParts[i];
+      p.x += p.vx; p.y += p.vy; p.vy += 0.06; p.t--;
+      if (p.t <= 0) fxParts.splice(i, 1);
+    }
+    for (let i = fxTexts.length - 1; i >= 0; i--) {
+      const f = fxTexts[i];
+      f.y += f.vy; f.t--;
+      if (f.t <= 0) fxTexts.splice(i, 1);
+    }
 
     // タイプライター送り
     if (["intro","result","win","lose"].includes(battle.phase)) {
-      if (battle.typed < pageLen() && game.tick % 2 === 0) battle.typed++;
+      if (battle.typed < pageLen() && game.tick % 2 === 0) { battle.typed++; if (battle.typed % 3 === 0) sfx("type"); }
     }
 
     // ディール成立アニメ(電話 → 端末入力 → チケットがブックへ)
@@ -2029,29 +2341,58 @@
       if (t === 10 && !battle.animHit) {
         battle.animHit = true;
         const amount = battle.pending.amount;
-        battle.book = Math.min(SIZE, battle.book + amount);
-        battle.remaining = Math.max(0, SIZE - battle.book);
+        battle.critFlash = !!battle.pending.crit;
+        battle.book = Math.min(battle.size, battle.book + amount);
+        battle.remaining = Math.max(0, battle.size - battle.book);
         if (amount > 0) {
-          const investors = ["MEIJI AM", "KANTO BK", "SAKURA LIFE", "NORTH FUND", "CENTRAL AM"];
+          const investors = ["MEIJI AM", "KANTO BK", "SAKURA LIFE", "NORTH FUND", "CENTRAL AM", "TAIYO PENSION", "GLOBAL SWF"];
           battle.ticketName = investors[(battle.turn + amount) % investors.length];
           battle.ticketAmount = amount;
           battle.ticketT = ORDER_TICKET_DURATION;
-          if (amount >= 15) { battle.dealFlash = 4; battle.screenShake = 4; }
+          sfx(battle.pending.crit ? "crit" : "order");
+          addFxText(190, 52, "+" + amount, battle.pending.crit ? "#ffb020" : "#7dffb0");
+          burstParts(165, 100, battle.pending.crit ? 26 : 12);
+          if (amount >= 15 || battle.pending.crit) { battle.dealFlash = battle.pending.crit ? 7 : 4; battle.screenShake = battle.pending.crit ? 7 : 4; }
         }
       }
       const resultFrame = battle.pending.amount > 0 ? ORDER_TICKET_DURATION : 48;
       if (t >= resultFrame) {
         battle.phase = "result";
-        setPages(battle.pending.pages, function () {
-          if (battle.book >= SIZE) { toWin(); return; }
-          battle.turn++;
-          if (game.stats.stamina <= 0) { toLose("stamina"); return; }
-          if (battle.turn > battle.turnLimit) { toLose("time"); return; }
-          toCommand();
-        });
+        setPages(battle.pending.pages, afterOrderResult);
         battle.pending = null;
       }
     }
+  }
+
+  // 受注結果のあと: マーケットイベント → 怒りフェーズ → ターン送り
+  function afterOrderResult() {
+    if (battle.book >= battle.size) { toWin(); return; }
+    const evPages = consumeEvent();
+    if (evPages) { setPages(evPages, afterEvent); return; }
+    afterEvent();
+  }
+  function afterEvent() {
+    if (game.stats.stamina <= 0) { toLose("stamina"); return; }
+    // 最終案件: 残額が4割を切るとCFOが怒りフェーズへ
+    if (game.dealIndex === DEALS.length - 1 && !battle.enraged && battle.book >= battle.size * 0.6) {
+      battle.enraged = true;
+      battle.atk = battle.deal.atk + 6;
+      battle.screenShake = 10; battle.hurtFlash = 8;
+      sfx("roar");
+      setPages([
+        [battle.deal.enemy + "が 怒りに 燃える！！", ""],
+        ["「ここからが 本当の 条件交渉だ」", "圧力が 激しさを増す……！"]
+      ], endTurn);
+      return;
+    }
+    endTurn();
+  }
+  function endTurn() {
+    if (game.stats.stamina <= 0) { toLose("stamina"); return; }
+    battle.turn++;
+    if (battle.anchorCd > 0) battle.anchorCd--;
+    if (battle.turn > battle.turnLimit) { toLose("time"); return; }
+    toCommand();
   }
 
   function loop() { update(); draw(); requestAnimationFrame(loop); }
@@ -2064,16 +2405,21 @@
         OK=["Enter"," ","z","Z"];
 
   function startOpening() { game.mode = "opening"; op.start = performance.now(); }
-  function finishOpening() { startBattle(); game.mode = "battle"; }
+  function finishOpening() { game.mode = "select"; game.selCursor = Math.min(game.unlocked - 1, DEALS.length - 1); }
 
   function confirm() {
-    if (game.mode === "title") { startOpening(); return; }
+    if (game.mode === "title") { sfx("confirm"); startOpening(); return; }
     if (game.mode === "opening") { finishOpening(); return; }
-    if (game.mode === "ending") { game.mode = "title"; return; }
+    if (game.mode === "select") {
+      if (game.selCursor < game.unlocked) { sfx("confirm"); startDeal(game.selCursor); }
+      else sfx("cancel");
+      return;
+    }
+    if (game.mode === "ending") { game.mode = "select"; game.selCursor = Math.min(game.unlocked - 1, DEALS.length - 1); return; }
     if (battle.phase === "command") { chooseCommand(); return; }
     if (["intro","result","win","lose"].includes(battle.phase)) {
       if (battle.typed < pageLen()) { battle.typed = pageLen(); return; }
-      if (battle.pi < battle.pages.length - 1) { battle.pi++; battle.typed = 0; return; }
+      if (battle.pi < battle.pages.length - 1) { battle.pi++; battle.typed = 0; sfx("page"); return; }
       const n = battle.next; battle.next = null;
       if (n) n();
     }
@@ -2084,12 +2430,17 @@
     if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].includes(e.key)) e.preventDefault();
     const k = e.key;
     if (game.mode === "opening" && k === "Escape") { finishOpening(); return; }
-    if (game.mode === "ending" && k === "Escape") { game.mode = "title"; return; }
+    if (game.mode === "ending" && k === "Escape") { game.mode = "select"; return; }
+    if (game.mode === "select") {
+      if (UP.includes(k)) { game.selCursor = (game.selCursor + DEALS.length - 1) % DEALS.length; sfx("cursor"); }
+      else if (DOWN.includes(k)) { game.selCursor = (game.selCursor + 1) % DEALS.length; sfx("cursor"); }
+      else if (OK.includes(k)) confirm();
+      return;
+    }
     if (game.mode === "battle" && battle.phase === "command") {
-      if (UP.includes(k)) battle.cursor = (battle.cursor + COMMANDS.length - 2) % COMMANDS.length;
-      else if (DOWN.includes(k)) battle.cursor = (battle.cursor + 2) % COMMANDS.length;
-      else if (LEFT.includes(k)) battle.cursor = (battle.cursor + COMMANDS.length - 1) % COMMANDS.length;
-      else if (RIGHT.includes(k)) battle.cursor = (battle.cursor + 1) % COMMANDS.length;
+      if (UP.includes(k) || DOWN.includes(k)) { battle.cursor = (battle.cursor + 3) % COMMANDS.length; sfx("cursor"); }
+      else if (LEFT.includes(k)) { battle.cursor = (battle.cursor + COMMANDS.length - 1) % COMMANDS.length; sfx("cursor"); }
+      else if (RIGHT.includes(k)) { battle.cursor = (battle.cursor + 1) % COMMANDS.length; sfx("cursor"); }
       else if (OK.includes(k)) confirm();
     } else {
       if (OK.includes(k)) confirm();
@@ -2101,15 +2452,32 @@
   }
   function commandHitIndex(p) {
     for (let i = 0; i < COMMANDS.length; i++) {
-      const cx = 8 + (i % 2) * 120;
-      const cy = 191 + ((i / 2) | 0) * 13;
-      if (p.x >= cx && p.x <= cx + 116 && p.y >= cy && p.y <= cy + 18) return i;
+      const cx = 8 + (i % 3) * 82;
+      const cy = 193 + ((i / 3) | 0) * 13;
+      if (p.x >= cx && p.x <= cx + 80 && p.y >= cy && p.y <= cy + 13) return i;
+    }
+    return -1;
+  }
+  function selectHitIndex(p) {
+    for (let i = 0; i < DEALS.length; i++) {
+      const y = 38 + i * 52;
+      if (p.x >= 10 && p.x <= 246 && p.y >= y && p.y <= y + 48) return i;
     }
     return -1;
   }
   window.addEventListener("pointerdown", function (e) {
     e.preventDefault();
     startAudio();
+    // 案件選択: カードをタップで決定
+    if (game.mode === "select") {
+      const hit = selectHitIndex(canvasPos(e));
+      if (hit >= 0) {
+        game.selCursor = hit;
+        if (hit < game.unlocked) { sfx("confirm"); startDeal(hit); }
+        else sfx("cancel");
+      }
+      return;
+    }
     // バトルのコマンド選択中はクリック位置で当たり判定(誤確定を防ぐ)
     if (game.mode === "battle" && battle.phase === "command") {
       const p = canvasPos(e);
@@ -2157,6 +2525,24 @@
       arp:["A3",null,"C4",null,"E4",null,"C4",null,"F3",null,"A3",null,"C4",null,"A3",null],
       drum:true
     },
+    boss: {
+      step:100, vol:0.028,
+      mel:["A4","A4",null,"C5","B4",null,"A4","E5","D5",null,"C5","D5","E5",null,"A5",null,
+           "G5","E5","D5","C5","B4",null,"E5","D5","C5","B4","A4",null,"G4","A4",null,null],
+      bas:["A2","A2","E2","A2","F2","F2","C2","F2","G2","G2","D2","G2","E2","E2","B2","E2",
+           "A2","A2","E2","A2","F2","F2","C2","F2","D2","D2","A2","D2","E2","E2","E2","E2"],
+      arp:["A3","C4","E4","C4","F3","A3","C4","A3","G3","B3","D4","B3","E3","G3","B3","G3"],
+      drum:true
+    },
+    select: {
+      step:132, vol:0.022,
+      mel:["C5",null,"E5",null,"G5",null,"E5",null,"D5",null,"F5",null,"A5",null,"F5",null,
+           "B4",null,"D5",null,"G5",null,"D5",null,"C5",null,"E5",null,"C5",null,null,null],
+      bas:["C3",null,null,null,"F2",null,null,null,"G2",null,null,null,"C3",null,null,null,
+           "A2",null,null,null,"F2",null,null,null,"G2",null,null,null,"C3",null,null,null],
+      arp:["C4","E4","G4","E4","F3","A3","C4","A3","G3","B3","D4","B3","C4","E4","G4","E4"],
+      drum:false
+    },
     win: {
       step:112, vol:0.03,
       mel:["C5","E5","G5","C6","B5","G5","E5","C5","D5","F5","A5","D6","C6","A5","G5",null,
@@ -2195,10 +2581,35 @@
   }
   function noteAt(seq, i) { return seq[i % seq.length]; }
   function curTrackName() {
-    if (game.mode === "battle") return "battle";
+    if (game.mode === "battle") return battle.enraged ? "boss" : "battle";
     if (game.mode === "opening") return "opening";
+    if (game.mode === "select") return "select";
     if (game.mode === "ending") return ending.result === "lose" ? "lose" : "win";
     return "title";
+  }
+
+  // ---- 効果音(SE) ----
+  const SFX = {
+    cursor:  [["E5", 0.03, 0.05, "square"]],
+    confirm: [["C5", 0, 0.06, "square"], ["G5", 0.05, 0.09, "square"]],
+    cancel:  [["G4", 0, 0.07, "square"], ["D4", 0.06, 0.11, "square"]],
+    page:    [["A4", 0, 0.04, "square"]],
+    type:    [["A5", 0, 0.014, "square"]],
+    order:   [["C5", 0, 0.05, "square"], ["E5", 0.05, 0.05, "square"], ["G5", 0.10, 0.11, "square"]],
+    crit:    [["C5", 0, 0.05, "square"], ["E5", 0.04, 0.05, "square"], ["G5", 0.08, 0.05, "square"], ["C6", 0.12, 0.16, "square"], ["E6", 0.2, 0.2, "triangle"]],
+    good:    [["D5", 0, 0.06, "triangle"], ["A5", 0.06, 0.12, "triangle"]],
+    hurt:    [["G3", 0, 0.09, "sawtooth"], ["D3", 0.07, 0.14, "sawtooth"]],
+    roar:    [["C3", 0, 0.16, "sawtooth"], ["B2", 0.1, 0.2, "sawtooth"], ["G2", 0.22, 0.3, "sawtooth"]],
+    fanfare: [["C5", 0, 0.09, "square"], ["F5", 0.09, 0.09, "square"], ["A5", 0.18, 0.09, "square"], ["C6", 0.27, 0.3, "square"]]
+  };
+  function sfx(name) {
+    if (!audio.ctx) return;
+    const seq = SFX[name]; if (!seq) return;
+    const now = audio.ctx.currentTime + 0.01;
+    const vol = name === "type" ? 0.012 : 0.05;
+    for (let i = 0; i < seq.length; i++) {
+      blip(seq[i][0], now + seq[i][1], seq[i][2], vol, seq[i][3]);
+    }
   }
   function makeNoise() {
     const len = audio.ctx.sampleRate / 2;
