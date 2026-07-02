@@ -453,8 +453,30 @@
     { id:"widen",     label:"ワイドニング" },   // 需要↑(気力↓)
     { id:"tighten",   label:"タイトニング" },   // 気力回復(需要↓)
     { id:"explain",   label:"ロードショー" },
-    { id:"nemawashi", label:"必殺オーダー" }
+    { id:"nemawashi", label:"必殺オーダー" },
+    { id:"hold",      label:"様子見" }
   ];
+
+  // 投資家タイプ: 好みに合うコマンドで オーダーが伸びやすい
+  const INVESTOR_TYPES = [
+    { name:"年金AM", pref:"tight", tag:"タイト志向" },
+    { name:"地銀", pref:"wide", tag:"流動性重視" },
+    { name:"生保", pref:"explain", tag:"説明重視" },
+    { name:"海外AM", pref:"wide", tag:"利回り重視" },
+    { name:"信託", pref:"tight", tag:"格付重視" },
+    { name:"年金基金", pref:"explain", tag:"長期保有" }
+  ];
+  function currentInvestor() {
+    return INVESTOR_TYPES[(battle.turn + Math.floor(battle.book / 8)) % INVESTOR_TYPES.length];
+  }
+  function investorBonus(id) {
+    const inv = currentInvestor();
+    if (inv.pref === id) return 1.35;
+    if (id === "hold") return 0.85;
+    if (id === "widen" && inv.pref === "tight") return 0.75;
+    if (id === "tighten" && inv.pref === "wide") return 0.75;
+    return 1;
+  }
 
   // 地合い(市場ムード)。オーダーの入りと 窓の外の天気を左右する
   function marketMood() {
@@ -515,6 +537,26 @@
     }
   }
 
+  function addPopup(text, x, y, col) {
+    battle.popups.push({ text: text, x: x, y: y, life: 88, col: col || "#7dffb0", vy: -0.35 });
+  }
+  function updatePopups() {
+    for (let i = battle.popups.length - 1; i >= 0; i--) {
+      const p = battle.popups[i];
+      p.y += p.vy;
+      p.life--;
+      if (p.life <= 0) battle.popups.splice(i, 1);
+    }
+  }
+  function drawPopups() {
+    for (let i = 0; i < battle.popups.length; i++) {
+      const p = battle.popups[i];
+      ctx.globalAlpha = Math.min(1, p.life / 28);
+      drawNumber(p.text, p.x, p.y, p.col);
+      ctx.globalAlpha = 1;
+    }
+  }
+
   const battle = {
     book: 0,                   // 集まったオーダー累計(億)。SIZE到達で完売=勝利
     shown: 0,                  // ゲージ表示値(なめらかに増やす)
@@ -532,6 +574,9 @@
     screenShake: 0, dealFlash: 0,
     ticketT: 0, ticketAmount: 0, ticketName: "", ticketCrit: false,
     momentum: 0,               // 勢い。大口オーダーが続くと 需要が需要を呼ぶ
+    combo: 0,                  // 連続好調。大口が続くと ボーナス
+    cfoMood: 55,               // CFO満足度。高いと クリティカル率↑
+    popups: [],
     next: null
   };
 
@@ -550,6 +595,7 @@
     battle.book = 0; battle.shown = 0;
     battle.remaining = SIZE; battle.shownRemaining = SIZE;
     battle.rate = 6; battle.trend = 0; battle.turn = 1; battle.momentum = 0;
+    battle.combo = 0; battle.cfoMood = 55; battle.popups = [];
     battle.cursor = 0; battle.phase = "intro";
     battle.pending = null; battle.animT = 0; battle.animHit = false;
     battle.screenShake = 0; battle.dealFlash = 0;
@@ -599,25 +645,48 @@
       }
       applyStat({ stamina:-22, nemawashi:-35 });
       battle.trend = 0; imm = 28;
+      battle.cfoMood = Math.min(100, battle.cfoMood + 12);
       pages = [["必殺オーダーを たたき込んだ！", ""],
                ["大型オーダー！ 気力とゲージを消費", ""]];
+    } else if (id === "hold") {
+      applyStat({ stamina:10, market:5, trust:2 });
+      battle.rate = Math.max(0, battle.rate - 2);
+      battle.trend = 0;
+      battle.cfoMood = Math.min(100, battle.cfoMood + 4);
+      pages = [["市場を 見送り 様子を見た。", ""],
+               ["気力回復 ／ 地合いが 少し落ち着いた", ""]];
     }
 
-    // このターンに入る投資家オーダー(億)。地合いと勢いで大きく変わる
+    if (id === "widen") battle.cfoMood = Math.max(0, battle.cfoMood - 10);
+    else if (id === "tighten") battle.cfoMood = Math.min(100, battle.cfoMood + 8);
+    else if (id === "explain") battle.cfoMood = Math.min(100, battle.cfoMood + 5);
+
+    const inv = currentInvestor();
+    const prefMatch = inv.pref === id;
+
+    // このターンに入る投資家オーダー(億)。地合い・勢い・投資家好み・スプレッドで変わる
     const mul = 0.6 + (game.stats.market / 100) * 0.8;
-    let orders = Math.round((battle.rate + battle.momentum * 2) * mul) + imm + ((Math.random()*3) | 0);
+    let orders = Math.round((battle.rate + battle.momentum * 2) * mul * investorBonus(id)) + imm + ((Math.random()*3) | 0);
+    // スプレッド105-125bp = 絶妙ゾーン(タイトだが通る)
+    if (game.stats.spread >= 105 && game.stats.spread <= 125) orders = Math.ceil(orders * 1.22);
     let critical = false;
-    if (orders > 0 && Math.random() < 0.18) { critical = true; orders = Math.ceil(orders * 1.6); }
+    const critChance = 0.12 + battle.cfoMood / 400 + (prefMatch ? 0.08 : 0);
+    if (orders > 0 && Math.random() < critChance) { critical = true; orders = Math.ceil(orders * 1.65); }
+    if (orders >= 8) battle.combo = Math.min(5, battle.combo + 1);
+    else battle.combo = 0;
+    if (battle.combo >= 2) orders += battle.combo * 2;
     orders = Math.min(battle.remaining, Math.max(0, orders));
     applyStat({ demand: orders });
 
     // 勢い(モメンタム): 大口が続くと 需要が需要を呼ぶ
-    if (orders >= 12) battle.momentum = Math.min(3, battle.momentum + 1);
+    if (orders >= 10) battle.momentum = Math.min(3, battle.momentum + 1);
     else if (orders < 6) battle.momentum = 0;
 
     const after = battle.book + orders;
     const remainAfter = Math.max(0, SIZE - after);
-    if (critical) pages = pages.concat([["クリティカル！ 大口オーダー！！", "勢いが ついてきた"]]);
+    if (prefMatch) pages = pages.concat([["" + inv.name + " の好みに 合致！", "オーダーが 伸びやすい"]]);
+    if (critical) pages = pages.concat([["クリティカル！ 大口オーダー！！", "CFOも うなずいた"]]);
+    if (battle.combo >= 2) pages = pages.concat([["連続好調 x" + battle.combo + "！", "勢いボーナス +" + (battle.combo * 2) + "億"]]);
     pages = pages.concat([[
       "投資家オーダー +" + orders + "億円",
       "販売残高 " + remainAfter + "億円"
@@ -700,6 +769,9 @@
     ctx.lineTo(82 + Math.cos(clockAng) * 5, 54 + Math.sin(clockAng) * 5); ctx.stroke();
     rect(19, 69, 12, 22, "#2a1a10");
     rect(16, 66, 18, 6, "#f3c46d"); rect(18, 72, 14, 2, "#8a6232");
+    // デスクランプの暖色光(SFC後期の室内演出)
+    ctx.fillStyle = "rgba(255,200,120,0.08)";
+    ctx.fillRect(0, 90, 90, 40);
     rect(22, 91, 6, 12, "#4a2a16"); rect(18, 103, 14, 2, "#2a1a10");
     // 床っぽい帯
     rect(0, 118, VW, 10, "#2a2030");
@@ -901,6 +973,14 @@
     drawShadow(64, 103, 46);
     drawArt(SPR_CFO, ex, ey, P, 2);
     drawCfoFineDetails(ex, ey);
+    // CFO満足度オーラ(SFC後期の敵キャラ光)
+    if (battle.cfoMood >= 70 && (game.tick >> 3) % 2 === 0) {
+      ctx.fillStyle = "rgba(125,255,176,0.12)";
+      ctx.fillRect(ex - 4, ey - 2, 56, 72);
+    } else if (battle.cfoMood <= 30 && (game.tick >> 2) % 2 === 0) {
+      ctx.fillStyle = "rgba(239,68,68,0.14)";
+      ctx.fillRect(ex - 4, ey - 2, 56, 72);
+    }
     // CFOの手元: 書類確認と小さな頷き
     if (cfoFrame === 2) rect(ex + 6, ey + 58, 9, 2, "#eef2f7");
 
@@ -979,6 +1059,7 @@
       btext("100 OKU COMPLETE", 72, 72, "#7dffb0", 1);
     }
     drawFx();
+    drawPopups();
   }
 
   // 販売残高ゲージ(100億円から約定分だけ減る)
@@ -1061,22 +1142,27 @@
     text("FLOW", 172, 165, C.yellow, 8);
     text(battle.rate + "億", 198, 165, C.frame, 8);
     text(arrow, 240, 156, acol, 9);
+    text("CFO", 172, 173, C.gray, 7);
+    miniGauge(194, 174, 22, battle.cfoMood / 100, battle.cfoMood >= 60 ? C.green : battle.cfoMood <= 30 ? C.red : C.amber);
     for (let i = 0; i < battle.momentum; i++) rect(222 + i * 5, 167, 3, 3, "#ff9a5c");
     drawMoodIcon(238, 165, marketMood().type);
 
     // --- 下段: コマンド or メッセージ(全幅) ---
-    drawWindow(3, 178, 250, 44);
+    drawWindow(3, 178, 250, 52);
     if (battle.phase === "command") {
       btext("COMMAND", 12, 184, C.yellow, 1);
       const mood2 = marketMood();
+      const inv = currentInvestor();
       drawMoodIcon(88, 183, mood2.type);
-      text("地合い " + mood2.label + (battle.momentum ? " ／ 勢い+" + battle.momentum : ""), 100, 184, C.gray, 8);
+      text("地合い " + mood2.label + (battle.combo >= 2 ? "  COMBO x" + battle.combo : ""), 100, 184, C.gray, 8);
+      text("次:" + inv.name + "(" + inv.tag + ")", 100, 193, inv.pref === COMMANDS[battle.cursor].id ? C.green : C.gray, 7);
       for (let i = 0; i < COMMANDS.length; i++) {
         const cx = 16 + (i%2)*120;
-        const cy = 196 + ((i/2)|0)*13;
+        const cy = 204 + ((i/2)|0)*11;
         const sel = i === battle.cursor;
         if (sel && (game.tick>>3)%2 === 0) text("▶", cx-10, cy, C.yellow, 10);
-        text(COMMANDS[i].label, cx, cy, sel ? C.yellow : C.frame, 10);
+        const hint = inv.pref === COMMANDS[i].id ? "★" : " ";
+        text(hint + COMMANDS[i].label, cx, cy, sel ? C.yellow : C.frame, 10);
       }
     } else {
       const p = curPage();
@@ -1085,7 +1171,7 @@
       else { s1 = s1.slice(0, battle.typed - (p[0]||"").length); }
       text(s0, 12, 186, C.frame, 11);
       text(s1, 12, 204, C.frame, 11);
-      if (battle.typed >= pageLen() && (game.tick>>4)%2 === 0) text("▼", 240, 206, C.frame, 9);
+      if (battle.typed >= pageLen() && (game.tick>>4)%2 === 0) text("▼", 240, 214, C.frame, 9);
     }
   }
 
@@ -1884,6 +1970,64 @@
     hfade(e, dur);
   }
 
+  // タイトル画面(768x672 / オープニングと同じ高密度)
+  function hDrawTitle() {
+    const bob = (game.tick >> 4) % 2;
+    const bands = ["#321a40", "#5b2643", "#884038", "#b75d2e", "#dd7a32", "#f0a24b", "#f4c26a"];
+    hrect(0, 0, HIW, 420, bands[0]);
+    for (let i = 0; i < bands.length; i++) hrect(0, i * 54, HIW, 54, bands[i]);
+    hdither(0, 0, HIW, 228, "#49214a", "#6b3142", 9, game.tick >> 2);
+    hdither(0, 228, HIW, 192, "#d07335", "#f0b15c", 12, game.tick >> 1);
+    hrect(552, 84, 102, 102, "#ffd27a");
+    hrect(576, 96, 78, 78, "#f0a24b");
+    for (let i = 0; i < 14; i++) {
+      const x = 24 + i * 54 + ((game.tick >> 4) % 3);
+      hrect(x, 48 + (i % 3) * 18, 36, 6, i % 2 ? "#f2b86a" : "#d97842");
+    }
+    hSkyline(520, 210, 360, "#34172a", "#6b3337", game.tick * 0.4, 78, 26);
+    hSkyline(580, 280, 420, "#24162b", "#4a2230", game.tick * 0.7, 96, 22);
+    // 左: ドラゴンシルエット
+    for (let i = 0; i < 38; i++) {
+      const x = 18 + (i * 13) % 210;
+      const y = 180 + (i * 17) % 280;
+      hrect(x, y, 8 + (i % 4) * 4, 6 + (i % 3) * 4, i % 2 ? "#140b18" : "#3a1b2e");
+    }
+    hDragonCfo(36, 210 + bob, 9, "#2a1a10");
+    // 右: 屋上ビル
+    hrect(498, 120, 228, 360, "#21162b");
+    hrect(510, 132, 204, 330, "#2f1d34");
+    for (let row = 0; row < 8; row++) for (let col = 0; col < 6; col++) {
+      const lit = ((row * 5 + col + (game.tick >> 5)) % 4) < 2;
+      hrect(528 + col * 32, 156 + row * 36, 14, 18, lit ? "#ffd36a" : "#161022");
+      if (lit) hrect(528 + col * 32, 156 + row * 36, 14, 3, "#fff0a8");
+    }
+    hrect(486, 108, 252, 18, "#3a2230");
+    hdrawArt(TITLE_HERO_BLUE, 552, 276 + bob, TP, 3);
+    hdrawArt(TITLE_HERO_GIRL, 672, 276 + (1 - bob), TP, 3);
+    hrect(546, 396, 72, 8, "rgba(0,0,0,0.35)");
+    hrect(666, 396, 72, 8, "rgba(0,0,0,0.35)");
+    htext("デットシンジケート", 84, 36, "#f6b35a", 62);
+    htext("百億円を完売せよ", 196, 118, "#f8d36b", 50);
+    hrect(176, 186, 416, 10, "#caa15a");
+    htext("- THE PRIMARY MARKET QUEST -", 168, 210, "#fff0a8", 26);
+    if ((game.tick >> 4) % 2 === 0) {
+      hrect(156, 520, 456, 54, "rgba(20,11,24,0.62)");
+      htext(IS_TOUCH ? "TAP START" : "PRESS START", IS_TOUCH ? 286 : 248, 534, "#fff0a8", 34);
+    }
+    htext("(c) SYNDICATE BANK 2026", 244, 612, "#c78958", 22);
+  }
+
+  function drawPostFx() {
+    useHighPixels();
+    ctx.fillStyle = "rgba(0,0,0,0.07)";
+    for (let y = 0; y < HIH; y += 3) ctx.fillRect(0, y, HIW, 1);
+    const g = ctx.createRadialGradient(HIW / 2, HIH / 2, HIH * 0.28, HIW / 2, HIH / 2, HIH * 0.82);
+    g.addColorStop(0, "rgba(0,0,0,0)");
+    g.addColorStop(1, "rgba(0,0,0,0.32)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, HIW, HIH);
+  }
+
   function drawOpening() {
     const e = (game.now - op.start) / 1000;
     hrect(0, 0, HIW, HIH, C.black);
@@ -2040,6 +2184,14 @@
   function drawBattleHighDetails() {
     // 既存の256x224バトル画面を3倍表示した上に、高解像度の1px情報を重ねる。
     const s = HI_SCALE;
+    const inv = currentInvestor();
+    htext("NEXT " + inv.name, 18, 14, "#fff0a8", 20);
+    htext(inv.tag, 18, 38, "#aab4d4", 16);
+    for (let i = 0; i < 5; i++) {
+      const idx = (battle.turn + i) % INVESTOR_TYPES.length;
+      const x = 180 + ((game.tick * 3 + i * 148) % (HIW + 100)) - 50;
+      hOrderSlip(x, 52 + (i % 2) * 16, 108, INVESTOR_TYPES[idx].name.slice(0, 5), 8 + (i % 4) * 4);
+    }
     // 会議室の壁、窓、夜景の微細ディテール
     for (let i = 0; i < 150; i++) {
       const x = (i * 47 + (game.tick >> 1)) % HIW;
@@ -2099,10 +2251,10 @@
     if (battle.phase === "command") {
       const i = battle.cursor;
       const x = (16 + (i % 2) * 120) * s;
-      const y = (196 + ((i / 2) | 0) * 13) * s;
-      hrect(x - 18, y - 8, 314, 38, "rgba(250,204,21,0.14)");
+      const y = (204 + ((i / 2) | 0) * 11) * s;
+      hrect(x - 18, y - 8, 314, 34, "rgba(250,204,21,0.14)");
       hrect(x - 18, y - 8, 314, 3, "#facc15");
-      hrect(x - 18, y + 27, 314, 3, "#7c2d12");
+      hrect(x - 18, y + 23, 314, 3, "#7c2d12");
     }
   }
 
@@ -2123,15 +2275,17 @@
     } else if (game.mode === "ending") {
       useHighPixels();
       drawEnding();
+    } else if (game.mode === "title") {
+      useHighPixels();
+      hrect(0, 0, HIW, HIH, C.black);
+      hDrawTitle();
     } else {
       useBasePixels();
-      if (game.mode === "title") drawTitle();
-      else {
-        drawBattleScreen();
-        useHighPixels();
-        drawBattleHighDetails();
-      }
+      drawBattleScreen();
+      useHighPixels();
+      drawBattleHighDetails();
     }
+    drawPostFx();
   }
 
   // =======================================================================
@@ -2141,6 +2295,7 @@
     game.tick++;
     game.now = performance.now();
     updateFx();
+    updatePopups();
 
     if (game.mode === "opening") {
       if (game.now - op.start >= OP_DUR) finishOpening();
@@ -2186,6 +2341,7 @@
           battle.ticketAmount = amount;
           battle.ticketT = ORDER_TICKET_DURATION;
           battle.ticketCrit = !!battle.pending.critical;
+          addPopup("+" + amount + "億", 108, 42, battle.ticketCrit ? "#ffd36a" : "#7dffb0");
           sfxCoin();
           if (battle.ticketCrit) {
             battle.dealFlash = 6; battle.screenShake = 6;
@@ -2257,8 +2413,8 @@
   function commandHitIndex(p) {
     for (let i = 0; i < COMMANDS.length; i++) {
       const cx = 8 + (i % 2) * 120;
-      const cy = 191 + ((i / 2) | 0) * 13;
-      if (p.x >= cx && p.x <= cx + 116 && p.y >= cy && p.y <= cy + 18) return i;
+      const cy = 199 + ((i / 2) | 0) * 11;
+      if (p.x >= cx && p.x <= cx + 116 && p.y >= cy && p.y <= cy + 16) return i;
     }
     return -1;
   }
